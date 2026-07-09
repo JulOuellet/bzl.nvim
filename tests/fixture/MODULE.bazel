@@ -1,0 +1,3 @@
+module(name = "bzl_nvim_fixture")
+
+bazel_dep(name = "rules_shell", version = "0.3.0")

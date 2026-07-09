@@ -1,0 +1,4 @@
+.direnv/
+deps/
+tests/fixture/bazel-*
+tests/fixture/MODULE.bazel.lock

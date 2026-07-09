@@ -1,0 +1,29 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+sh_binary(
+    name = "hello",
+    srcs = ["hello.sh"],
+)
+
+sh_test(
+    name = "hello_test",
+    srcs = ["hello_test.sh"],
+    size = "small",
+)
+
+sh_test(
+    name = "failing_test",
+    srcs = ["failing_test.sh"],
+    size = "small",
+    # excluded from `bazel test //...` wildcards; still listed by queries
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "scripts",
+    srcs = [
+        "hello.sh",
+        "hello_test.sh",
+    ],
+)
