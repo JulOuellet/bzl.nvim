@@ -13,11 +13,7 @@ function M.hello()
 end
 
 function M.targets()
-	require("bzl.targets").list(function(targets)
-		if targets then
-			vim.print(targets)
-		end
-	end)
+	require("bzl.picker").targets()
 end
 
 M.subcommands = {

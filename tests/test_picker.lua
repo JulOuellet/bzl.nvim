@@ -1,0 +1,62 @@
+local T = MiniTest.new_set()
+
+T["make_items"] = MiniTest.new_set()
+
+local make_items = require("bzl.picker").make_items
+
+T["make_items"]["maps targets to picker items"] = function()
+	local targets = {
+		{ kind = "sh_binary", label = "//:hello" },
+		{ kind = "sh_test", label = "//:hello_test" },
+		{ kind = "sh_library", label = "//lib:greetings" },
+	}
+	MiniTest.expect.equality(make_items(targets), {
+		{ text = "//:hello sh_binary", label = "//:hello", kind = "sh_binary" },
+		{ text = "//:hello_test sh_test", label = "//:hello_test", kind = "sh_test" },
+		{ text = "//lib:greetings sh_library", label = "//lib:greetings", kind = "sh_library" },
+	})
+end
+
+T["make_items"]["keeps target order"] = function()
+	local targets = {
+		{ kind = "sh_test", label = "//b:b" },
+		{ kind = "sh_test", label = "//a:a" },
+	}
+	local labels = vim.tbl_map(function(item)
+		return item.label
+	end, make_items(targets))
+	MiniTest.expect.equality(labels, { "//b:b", "//a:a" })
+end
+
+T["make_items"]["returns an empty list for no targets"] = function()
+	MiniTest.expect.equality(make_items({}), {})
+end
+
+local child = MiniTest.new_child_neovim()
+
+T["targets"] = MiniTest.new_set({
+	hooks = {
+		pre_case = function()
+			child.restart({ "-u", "scripts/minimal_init.lua" })
+		end,
+		post_once = child.stop,
+	},
+})
+
+-- the test child has no snacks.nvim on its runtimepath, which is exactly
+-- the environment the pcall guard exists for
+T["targets"]["degrades gracefully without snacks"] = function()
+	child.lua([[
+		_G.notifications = {}
+		vim.notify = function(msg, level)
+			table.insert(_G.notifications, { msg = msg, level = level })
+		end
+		require("bzl.picker").targets()
+	]])
+	local notifications = child.lua_get([[_G.notifications]])
+	MiniTest.expect.equality(#notifications, 1)
+	MiniTest.expect.equality(notifications[1].msg, "bzl.nvim: the target picker requires snacks.nvim")
+	MiniTest.expect.equality(notifications[1].level, vim.log.levels.ERROR)
+end
+
+return T
