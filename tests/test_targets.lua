@@ -1,0 +1,67 @@
+local T = MiniTest.new_set()
+
+T["parse"] = MiniTest.new_set()
+
+local parse = require("bzl.targets").parse
+
+T["parse"]["extracts kind and label"] = function()
+	local output = table.concat({
+		"sh_binary rule //:hello",
+		"sh_test rule //:hello_test",
+		"sh_library rule //lib:greetings",
+	}, "\n")
+	MiniTest.expect.equality(parse(output), {
+		{ kind = "sh_binary", label = "//:hello" },
+		{ kind = "sh_test", label = "//:hello_test" },
+		{ kind = "sh_library", label = "//lib:greetings" },
+	})
+end
+
+T["parse"]["skips lines that are not rule targets"] = function()
+	local output = table.concat({
+		"Loading: 3 packages loaded",
+		"sh_test rule //:hello_test",
+		"source file //:hello.sh",
+	}, "\n")
+	MiniTest.expect.equality(parse(output), { { kind = "sh_test", label = "//:hello_test" } })
+end
+
+T["parse"]["returns an empty list for empty output"] = function()
+	MiniTest.expect.equality(parse(""), {})
+end
+
+T["integration"] = MiniTest.new_set()
+
+T["integration"]["lists the fixture targets through real bazel"] = function()
+	if vim.fn.executable(require("bzl.config").get().bazel_cmd) == 0 then
+		MiniTest.skip("bazel not available")
+	end
+
+	local child = MiniTest.new_child_neovim()
+	child.restart({ "-u", "scripts/minimal_init.lua" })
+	child.cmd("edit tests/fixture/BUILD.bazel")
+	child.lua([[
+		_G.bzl_result = nil
+		require("bzl.targets").list(function(targets)
+			_G.bzl_result = targets or false
+		end)
+	]])
+	-- generous timeout: the first run downloads deps and starts the bazel server
+	child.lua([[vim.wait(120000, function() return _G.bzl_result ~= nil end, 100)]])
+	local result = child.lua_get([[_G.bzl_result]])
+	MiniTest.expect.no_equality(result, false)
+	local labels = vim.tbl_map(function(t)
+		return t.label
+	end, result)
+	table.sort(labels)
+	MiniTest.expect.equality(labels, {
+		"//:failing_test",
+		"//:hello",
+		"//:hello_test",
+		"//:scripts",
+		"//lib:greetings",
+	})
+	child.stop()
+end
+
+return T

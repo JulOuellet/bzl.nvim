@@ -14,17 +14,12 @@
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = import nixpkgs {inherit system;};
-
-        # provide `bazel` on PATH via bazelisk, which downloads the
-        # version pinned in .bazelversion
-        bazel = pkgs.writeShellScriptBin "bazel" ''
-          exec ${pkgs.bazelisk}/bin/bazelisk "$@"
-        '';
       in {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            bazel
-            pkgs.bazelisk
+            # bazel from nixpkgs rather than via bazelisk: bazelisk downloads
+            # generic linux binaries, which cannot run on NixOS
+            pkgs.bazel_8
             pkgs.stylua
             pkgs.gnumake
           ];

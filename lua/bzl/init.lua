@@ -12,8 +12,17 @@ function M.hello()
 	vim.notify(msg, vim.log.levels.INFO, { title = "bzl.nvim" })
 end
 
+function M.targets()
+	require("bzl.targets").list(function(targets)
+		if targets then
+			vim.print(targets)
+		end
+	end)
+end
+
 M.subcommands = {
 	hello = M.hello,
+	targets = M.targets,
 }
 
 ---Entry point for the :Bzl user command.
