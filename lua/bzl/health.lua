@@ -17,6 +17,14 @@ function M.check()
 			"Install bazel/bazelisk, or point `bazel_cmd` at your binary in setup()",
 		})
 	end
+
+	if pcall(require, "snacks") then
+		vim.health.ok("snacks.nvim is installed")
+	else
+		vim.health.warn("snacks.nvim not found", {
+			"The target picker (:Bzl targets) requires folke/snacks.nvim",
+		})
+	end
 end
 
 return M

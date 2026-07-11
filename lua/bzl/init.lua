@@ -20,10 +20,31 @@ function M.rerun()
 	require("bzl.runner").rerun()
 end
 
+---Force a fresh target query, like the sync button of the IntelliJ
+---bazel plugin. Reports progress and the resulting target count.
+function M.sync()
+	vim.notify("bzl.nvim: syncing targets...", vim.log.levels.INFO)
+	local start = vim.uv.hrtime()
+	require("bzl.targets").list(function(targets)
+		if not targets then
+			return -- failure already notified
+		end
+		require("bzl.python").sync(function(python)
+			local ms = math.floor((vim.uv.hrtime() - start) / 1e6)
+			local msg = ("bzl.nvim: synced %d targets in %d ms"):format(#targets, ms)
+			if python then
+				msg = msg .. (", %d python paths -> %d clients"):format(python.paths, python.clients)
+			end
+			vim.notify(msg, vim.log.levels.INFO)
+		end)
+	end, { refresh = true })
+end
+
 M.subcommands = {
 	hello = M.hello,
 	targets = M.targets,
 	rerun = M.rerun,
+	sync = M.sync,
 }
 
 ---Entry point for the :Bzl user command.
