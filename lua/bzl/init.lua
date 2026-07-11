@@ -16,9 +16,14 @@ function M.targets()
 	require("bzl.picker").targets()
 end
 
+function M.rerun()
+	require("bzl.runner").rerun()
+end
+
 M.subcommands = {
 	hello = M.hello,
 	targets = M.targets,
+	rerun = M.rerun,
 }
 
 ---Entry point for the :Bzl user command.

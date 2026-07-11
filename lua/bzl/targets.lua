@@ -23,6 +23,47 @@ function M.parse(output)
 	return targets
 end
 
+---Parse a workspace-local label into package and target name.
+---External labels ("@repo//...") are not supported and yield nil.
+---Pure function.
+---@param label string e.g. "//lib:greetings"
+---@return { package: string, name: string }|nil
+function M.parse_label(label)
+	local pkg, name = label:match("^//([^:]*):([^:/]+)$")
+	if not pkg then
+		return nil
+	end
+	return { package = pkg, name = name }
+end
+
+---Resolve a label to the BUILD file defining it and, when found, to
+---the line of its `name = "..."` attribute.
+---@param label string
+---@param root string workspace root (absolute path)
+---@return { file: string, lnum: integer|nil }|nil
+function M.location(label, root)
+	local parsed = M.parse_label(label)
+	if not parsed then
+		return nil
+	end
+	local dir = parsed.package == "" and root or (root .. "/" .. parsed.package)
+	for _, build_name in ipairs({ "BUILD.bazel", "BUILD" }) do
+		local file = dir .. "/" .. build_name
+		if vim.uv.fs_stat(file) then
+			local pattern = 'name%s*=%s*"' .. vim.pesc(parsed.name) .. '"'
+			local lnum = 0
+			for line in io.lines(file) do
+				lnum = lnum + 1
+				if line:match(pattern) then
+					return { file = file, lnum = lnum }
+				end
+			end
+			return { file = file }
+		end
+	end
+	return nil
+end
+
 ---List all targets in the current workspace, from cache when warm.
 ---Errors are reported via vim.notify; `on_done` then receives nil, so
 ---callers can always rely on being called exactly once.

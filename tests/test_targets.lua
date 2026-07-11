@@ -30,6 +30,49 @@ T["parse"]["returns an empty list for empty output"] = function()
 	MiniTest.expect.equality(parse(""), {})
 end
 
+T["parse_label"] = MiniTest.new_set()
+
+local parse_label = require("bzl.targets").parse_label
+
+T["parse_label"]["splits package and name"] = function()
+	MiniTest.expect.equality(parse_label("//lib:greetings"), { package = "lib", name = "greetings" })
+	MiniTest.expect.equality(parse_label("//foo/bar:baz"), { package = "foo/bar", name = "baz" })
+end
+
+T["parse_label"]["handles the root package"] = function()
+	MiniTest.expect.equality(parse_label("//:hello"), { package = "", name = "hello" })
+end
+
+T["parse_label"]["rejects external and malformed labels"] = function()
+	MiniTest.expect.equality(parse_label("@rules_shell//shell:sh_binary"), nil)
+	MiniTest.expect.equality(parse_label("not a label"), nil)
+	MiniTest.expect.equality(parse_label("//lib"), nil)
+end
+
+T["location"] = MiniTest.new_set()
+
+local location = require("bzl.targets").location
+local fixture_root = vim.fn.getcwd() .. "/tests/fixture"
+
+T["location"]["finds the BUILD file and name line"] = function()
+	MiniTest.expect.equality(
+		location("//lib:greetings", fixture_root),
+		{ file = fixture_root .. "/lib/BUILD.bazel", lnum = 4 }
+	)
+end
+
+T["location"]["finds targets in the root package"] = function()
+	MiniTest.expect.equality(location("//:hello", fixture_root), { file = fixture_root .. "/BUILD.bazel", lnum = 5 })
+end
+
+T["location"]["returns the file without a line for unknown names"] = function()
+	MiniTest.expect.equality(location("//lib:nope", fixture_root), { file = fixture_root .. "/lib/BUILD.bazel" })
+end
+
+T["location"]["returns nil for a missing package"] = function()
+	MiniTest.expect.equality(location("//nope:x", fixture_root), nil)
+end
+
 T["integration"] = MiniTest.new_set()
 
 T["integration"]["lists the fixture targets through real bazel"] = function()

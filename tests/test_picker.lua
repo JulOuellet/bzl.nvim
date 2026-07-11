@@ -32,6 +32,27 @@ T["make_items"]["returns an empty list for no targets"] = function()
 	MiniTest.expect.equality(make_items({}), {})
 end
 
+T["verb_for"] = MiniTest.new_set()
+
+local verb_for = require("bzl.picker").verb_for
+
+T["verb_for"]["tests test targets"] = function()
+	MiniTest.expect.equality(verb_for("sh_test"), "test")
+	MiniTest.expect.equality(verb_for("java_test"), "test")
+end
+
+T["verb_for"]["runs binary targets"] = function()
+	MiniTest.expect.equality(verb_for("sh_binary"), "run")
+	MiniTest.expect.equality(verb_for("py_binary"), "run")
+end
+
+T["verb_for"]["builds everything else"] = function()
+	MiniTest.expect.equality(verb_for("sh_library"), "build")
+	MiniTest.expect.equality(verb_for("filegroup"), "build")
+	-- suffix must be a suffix with the underscore, not a bare word
+	MiniTest.expect.equality(verb_for("test"), "build")
+end
+
 local child = MiniTest.new_child_neovim()
 
 T["targets"] = MiniTest.new_set({

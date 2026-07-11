@@ -27,7 +27,10 @@ T[":Bzl"]["is registered"] = function()
 end
 
 T[":Bzl"]["completes subcommands"] = function()
-	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]), { "hello", "targets" })
+	MiniTest.expect.equality(
+		child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]),
+		{ "hello", "rerun", "targets" }
+	)
 end
 
 T[":Bzl"]["reports unknown subcommand"] = function()
