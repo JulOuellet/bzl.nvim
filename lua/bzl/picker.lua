@@ -42,16 +42,18 @@ local function act(picker, item, verb)
 	end
 end
 
----Open a snacks picker over all targets in the current workspace.
----Requires snacks.nvim; reports an error if it is not installed.
-function M.targets()
+---Open the target picker over whatever `fetch` produces.
+---`root` is captured by callers while the current buffer is still the
+---user's file; picker callbacks run with the picker's own buffer current.
+---@param root string|nil workspace root
+---@param title string
+---@param fetch fun(on_done: fun(targets: bzl.Target[]|nil))
+local function open_picker(root, title, fetch)
 	local ok, snacks = pcall(require, "snacks")
 	if not ok then
 		vim.notify("bzl.nvim: the target picker requires snacks.nvim", vim.log.levels.ERROR)
 		return
 	end
-
-	local root = require("bzl.cli").workspace_root()
 
 	---Resolve and cache an item's BUILD file location on the item itself.
 	---nil = not resolved yet, false = resolved but not found.
@@ -67,12 +69,12 @@ function M.targets()
 		return item._location or nil
 	end
 
-	require("bzl.targets").list(function(targets)
+	fetch(function(targets)
 		if not targets then
 			return
 		end
 		snacks.picker.pick({
-			title = "Bazel targets",
+			title = title,
 			items = M.make_items(targets),
 			format = function(item)
 				return { { item.label }, { " " }, { item.kind, "Comment" } }
@@ -124,6 +126,38 @@ function M.targets()
 				},
 			},
 		})
+	end)
+end
+
+---Open a snacks picker over all targets in the current workspace.
+---Requires snacks.nvim; reports an error if it is not installed.
+function M.targets()
+	local root = require("bzl.cli").workspace_root()
+	open_picker(root, "Bazel targets", function(on_done)
+		require("bzl.targets").list(on_done)
+	end)
+end
+
+---Open the picker over only the targets of the current buffer's
+---package: the nearest BUILD file at or above the file.
+function M.here()
+	local root = require("bzl.cli").workspace_root()
+	if not root then
+		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
+		return
+	end
+	local file = vim.api.nvim_buf_get_name(0)
+	if file == "" then
+		vim.notify("bzl.nvim: the current buffer has no file", vim.log.levels.WARN)
+		return
+	end
+	local pkg = require("bzl.targets").package_of(file, root)
+	if not pkg then
+		vim.notify("bzl.nvim: this file is not inside a bazel package", vim.log.levels.WARN)
+		return
+	end
+	open_picker(root, ("Bazel targets (//%s)"):format(pkg), function(on_done)
+		require("bzl.targets").list_package(pkg, on_done)
 	end)
 end
 

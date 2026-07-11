@@ -64,6 +64,49 @@ function M.location(label, root)
 	return nil
 end
 
+---Package of a file: the directory of the nearest BUILD file at or
+---above it, relative to the workspace root.
+---@param path string absolute file path
+---@param root string workspace root (absolute path)
+---@return string|nil package "" for the root package, nil outside one
+function M.package_of(path, root)
+	local build = vim.fs.find({ "BUILD.bazel", "BUILD" }, {
+		path = vim.fs.dirname(path),
+		upward = true,
+		stop = vim.fs.dirname(root),
+	})[1]
+	if not build then
+		return nil
+	end
+	local dir = vim.fs.dirname(build)
+	if dir == root then
+		return ""
+	end
+	if dir:sub(1, #root + 1) ~= root .. "/" then
+		return nil -- BUILD file found above the workspace root
+	end
+	return dir:sub(#root + 2)
+end
+
+---List the targets of a single package through a scoped query.
+---Small and fast, so results are not cached.
+---@param pkg string package path, "" for the root package
+---@param on_done fun(targets: bzl.Target[]|nil)
+function M.list_package(pkg, on_done)
+	local scope = ("kind(rule, //%s:all)"):format(pkg)
+	local started = require("bzl.cli").run({ "query", scope, "--output=label_kind" }, function(result)
+		if result.code ~= 0 then
+			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
+			on_done(nil)
+			return
+		end
+		on_done(M.parse(result.stdout or ""))
+	end)
+	if not started then
+		on_done(nil)
+	end
+end
+
 ---List all targets in the current workspace, from cache when warm.
 ---Errors are reported via vim.notify; `on_done` then receives nil, so
 ---callers can always rely on being called exactly once.

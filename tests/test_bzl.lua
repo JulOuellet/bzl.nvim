@@ -29,7 +29,7 @@ end
 T[":Bzl"]["completes subcommands"] = function()
 	MiniTest.expect.equality(
 		child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]),
-		{ "hello", "rerun", "sync", "targets" }
+		{ "hello", "here", "rerun", "sync", "targets" }
 	)
 end
 

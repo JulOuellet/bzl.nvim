@@ -16,6 +16,10 @@ function M.targets()
 	require("bzl.picker").targets()
 end
 
+function M.here()
+	require("bzl.picker").here()
+end
+
 function M.rerun()
 	require("bzl.runner").rerun()
 end
@@ -43,6 +47,7 @@ end
 M.subcommands = {
 	hello = M.hello,
 	targets = M.targets,
+	here = M.here,
 	rerun = M.rerun,
 	sync = M.sync,
 }

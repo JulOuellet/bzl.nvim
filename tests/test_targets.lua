@@ -73,6 +73,22 @@ T["location"]["returns nil for a missing package"] = function()
 	MiniTest.expect.equality(location("//nope:x", fixture_root), nil)
 end
 
+T["package_of"] = MiniTest.new_set()
+
+local package_of = require("bzl.targets").package_of
+
+T["package_of"]["resolves the root package"] = function()
+	MiniTest.expect.equality(package_of(fixture_root .. "/hello.sh", fixture_root), "")
+end
+
+T["package_of"]["resolves a nested package"] = function()
+	MiniTest.expect.equality(package_of(fixture_root .. "/lib/greet.sh", fixture_root), "lib")
+end
+
+T["package_of"]["returns nil outside the workspace"] = function()
+	MiniTest.expect.equality(package_of(vim.fn.getcwd() .. "/README.md", fixture_root), nil)
+end
+
 T["integration"] = MiniTest.new_set()
 
 T["integration"]["lists the fixture targets through real bazel"] = function()
@@ -104,6 +120,26 @@ T["integration"]["lists the fixture targets through real bazel"] = function()
 		"//:scripts",
 		"//lib:greetings",
 	})
+	child.stop()
+end
+
+T["integration"]["lists a single package through real bazel"] = function()
+	if vim.fn.executable(require("bzl.config").get().bazel_cmd) == 0 then
+		MiniTest.skip("bazel not available")
+	end
+
+	local child = MiniTest.new_child_neovim()
+	child.restart({ "-u", "scripts/minimal_init.lua" })
+	child.cmd("edit tests/fixture/lib/greet.sh")
+	child.lua([[
+		_G.bzl_result = nil
+		require("bzl.targets").list_package("lib", function(targets)
+			_G.bzl_result = targets or false
+		end)
+	]])
+	child.lua([[vim.wait(120000, function() return _G.bzl_result ~= nil end, 100)]])
+	local result = child.lua_get([[_G.bzl_result]])
+	MiniTest.expect.equality(result, { { kind = "sh_library", label = "//lib:greetings" } })
 	child.stop()
 end
 
