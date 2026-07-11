@@ -42,6 +42,56 @@ local function act(picker, item, verb)
 	end
 end
 
+---Location resolver bound to a workspace root, caching results on the
+---items themselves. nil = not resolved yet, false = resolved but absent.
+---@param root string|nil
+local function make_locate(root)
+	---@param item bzl.PickerItem
+	---@return { file: string, lnum: integer|nil }|nil
+	return function(item)
+		if not root then
+			return nil
+		end
+		if item._location == nil then
+			item._location = require("bzl.targets").location(item.label, root) or false
+		end
+		return item._location or nil
+	end
+end
+
+---Preview a target item: its BUILD file, at the target's name line.
+local function preview_target(ctx, locate)
+	local location = locate(ctx.item)
+	if not location then
+		ctx.preview:notify("no BUILD file found for " .. ctx.item.label, "warn")
+		return
+	end
+	ctx.item.file = location.file
+	ctx.item.pos = location.lnum and { location.lnum, 0 } or nil
+	return require("snacks.picker.preview").file(ctx)
+end
+
+---Close the picker and jump to the target's definition.
+local function goto_target(picker, item, locate)
+	picker:close()
+	local location = locate(item)
+	if not location then
+		vim.notify("bzl.nvim: no BUILD file found for " .. item.label, vim.log.levels.WARN)
+		return
+	end
+	vim.cmd.edit(vim.fn.fnameescape(location.file))
+	if location.lnum then
+		vim.api.nvim_win_set_cursor(0, { location.lnum, 0 })
+	end
+end
+
+local PICKER_KEYS = {
+	["<C-r>"] = { "bzl_run", mode = { "n", "i" } },
+	["<C-t>"] = { "bzl_test", mode = { "n", "i" } },
+	["<C-b>"] = { "bzl_build", mode = { "n", "i" } },
+	["<C-g>"] = { "bzl_goto", mode = { "n", "i" } },
+}
+
 ---Open the target picker over whatever `fetch` produces.
 ---`root` is captured by callers while the current buffer is still the
 ---user's file; picker callbacks run with the picker's own buffer current.
@@ -55,19 +105,7 @@ local function open_picker(root, title, fetch)
 		return
 	end
 
-	---Resolve and cache an item's BUILD file location on the item itself.
-	---nil = not resolved yet, false = resolved but not found.
-	---@param item bzl.PickerItem
-	---@return { file: string, lnum: integer|nil }|nil
-	local function locate(item)
-		if not root then
-			return nil
-		end
-		if item._location == nil then
-			item._location = require("bzl.targets").location(item.label, root) or false
-		end
-		return item._location or nil
-	end
+	local locate = make_locate(root)
 
 	fetch(function(targets)
 		if not targets then
@@ -83,14 +121,7 @@ local function open_picker(root, title, fetch)
 				act(picker, item, M.verb_for(item.kind))
 			end,
 			preview = function(ctx)
-				local location = locate(ctx.item)
-				if not location then
-					ctx.preview:notify("no BUILD file found for " .. ctx.item.label, "warn")
-					return
-				end
-				ctx.item.file = location.file
-				ctx.item.pos = location.lnum and { location.lnum, 0 } or nil
-				return require("snacks.picker.preview").file(ctx)
+				return preview_target(ctx, locate)
 			end,
 			actions = {
 				bzl_run = function(picker, item)
@@ -103,28 +134,10 @@ local function open_picker(root, title, fetch)
 					act(picker, item, "build")
 				end,
 				bzl_goto = function(picker, item)
-					picker:close()
-					local location = locate(item)
-					if not location then
-						vim.notify("bzl.nvim: no BUILD file found for " .. item.label, vim.log.levels.WARN)
-						return
-					end
-					vim.cmd.edit(vim.fn.fnameescape(location.file))
-					if location.lnum then
-						vim.api.nvim_win_set_cursor(0, { location.lnum, 0 })
-					end
+					goto_target(picker, item, locate)
 				end,
 			},
-			win = {
-				input = {
-					keys = {
-						["<C-r>"] = { "bzl_run", mode = { "n", "i" } },
-						["<C-t>"] = { "bzl_test", mode = { "n", "i" } },
-						["<C-b>"] = { "bzl_build", mode = { "n", "i" } },
-						["<C-g>"] = { "bzl_goto", mode = { "n", "i" } },
-					},
-				},
-			},
+			win = { input = { keys = PICKER_KEYS } },
 		})
 	end)
 end
@@ -158,6 +171,124 @@ function M.here()
 	end
 	open_picker(root, ("Bazel targets (//%s)"):format(pkg), function(on_done)
 		require("bzl.targets").list_package(pkg, on_done)
+	end)
+end
+
+---Browse all targets as a collapsible directory tree. <CR> expands or
+---collapses directories and acts on targets; typing searches every
+---target while keeping its directory chain visible.
+function M.tree()
+	local ok, snacks = pcall(require, "snacks")
+	if not ok then
+		vim.notify("bzl.nvim: the target picker requires snacks.nvim", vim.log.levels.ERROR)
+		return
+	end
+
+	local root = require("bzl.cli").workspace_root()
+	local locate = make_locate(root)
+
+	require("bzl.targets").list(function(targets)
+		if not targets then
+			return
+		end
+		local tree = require("bzl.tree")
+		local forest = tree.build(targets)
+		local searching = false
+
+		---Wrap an action so it only applies to target leaves.
+		local function leaf(action)
+			return function(picker, item)
+				if not item.dir then
+					action(picker, item)
+				end
+			end
+		end
+
+		snacks.picker.pick({
+			title = "Bazel tree",
+			-- a function finder: re-run on every picker:find(), which is
+			-- how expand/collapse refreshes the list
+			finder = function(_, ctx)
+				-- while a pattern is typed, all nodes compete in the fuzzy
+				-- match and matches keep their ancestors via keep_parents;
+				-- otherwise show only the expanded part of the tree
+				local searching_now = not ctx.filter:is_empty()
+				ctx.picker.matcher.opts.keep_parents = searching_now
+				local items = {}
+				for _, node in ipairs(forest.nodes) do
+					if searching_now or tree.visible(node) then
+						items[#items + 1] = node
+					end
+				end
+				return items
+			end,
+			sort = { fields = { "sort" } },
+			filter = {
+				-- trigger a re-find when the pattern flips empty/non-empty
+				transform = function(_, filter)
+					local searching_now = not filter:is_empty()
+					if searching ~= searching_now then
+						searching = searching_now
+						return true
+					end
+				end,
+			},
+			format = function(item)
+				local depth = 0
+				local parent = item.parent
+				while parent and not parent.root do
+					depth = depth + 1
+					parent = parent.parent
+				end
+				local indent = string.rep("  ", depth)
+				if item.dir then
+					local icon = item.open and " " or " "
+					return { { indent }, { icon .. item.name, "SnacksPickerDirectory" } }
+				end
+				return { { indent }, { item.name }, { " " }, { item.kind, "Comment" } }
+			end,
+			confirm = function(picker, item)
+				if item.dir then
+					item.open = not item.open
+					picker.list:set_target()
+					picker:find()
+				else
+					act(picker, item, M.verb_for(item.kind))
+				end
+			end,
+			preview = function(ctx)
+				local item = ctx.item
+				if not item.dir then
+					return preview_target(ctx, locate)
+				end
+				if root then
+					local dir = item.path == "" and root or (root .. "/" .. item.path)
+					for _, build_name in ipairs({ "BUILD.bazel", "BUILD" }) do
+						if vim.uv.fs_stat(dir .. "/" .. build_name) then
+							item.file = dir .. "/" .. build_name
+							item.pos = nil
+							return require("snacks.picker.preview").file(ctx)
+						end
+					end
+				end
+				ctx.preview:notify("no BUILD file in //" .. item.path, "warn")
+			end,
+			actions = {
+				bzl_run = leaf(function(picker, item)
+					act(picker, item, "run")
+				end),
+				bzl_test = leaf(function(picker, item)
+					act(picker, item, "test")
+				end),
+				bzl_build = leaf(function(picker, item)
+					act(picker, item, "build")
+				end),
+				bzl_goto = leaf(function(picker, item)
+					goto_target(picker, item, locate)
+				end),
+			},
+			win = { input = { keys = PICKER_KEYS } },
+		})
 	end)
 end
 

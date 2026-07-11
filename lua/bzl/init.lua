@@ -20,6 +20,10 @@ function M.here()
 	require("bzl.picker").here()
 end
 
+function M.tree()
+	require("bzl.picker").tree()
+end
+
 function M.rerun()
 	require("bzl.runner").rerun()
 end
@@ -48,6 +52,7 @@ M.subcommands = {
 	hello = M.hello,
 	targets = M.targets,
 	here = M.here,
+	tree = M.tree,
 	rerun = M.rerun,
 	sync = M.sync,
 }
