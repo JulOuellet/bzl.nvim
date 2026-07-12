@@ -51,9 +51,68 @@ function M.push_extra_paths(paths, clients)
 	return #clients
 end
 
----Discover site-packages under the workspace's bazel external root and
----push them to the attached python language servers.
----`on_done` is called exactly once; nil means the discovery failed.
+---Collapse "." and ".." segments of an absolute path. Pure function.
+---@param path string
+---@return string
+local function collapse(path)
+	local parts = {}
+	for part in path:gmatch("[^/]+") do
+		if part == ".." then
+			table.remove(parts)
+		elseif part ~= "." then
+			parts[#parts + 1] = part
+		end
+	end
+	return "/" .. table.concat(parts, "/")
+end
+
+---Derive first-party import roots from the `imports` attributes of py
+---rules in `bazel query --output=streamed_jsonproto` output: each entry
+---adds a sys.path root relative to the rule's package. Pure function.
+---@param output string one JSON object per line
+---@param root string workspace root (absolute path)
+---@return string[] sorted absolute roots, deduplicated
+function M.parse_import_roots(output, root)
+	local roots, seen = {}, {}
+	for line in output:gmatch("[^\r\n]+") do
+		local ok, target = pcall(vim.json.decode, line)
+		local rule = ok and type(target) == "table" and target.type == "RULE" and target.rule or nil
+		if rule then
+			local pkg = (rule.name or ""):match("^//([^:]*):")
+			for _, attr in ipairs(rule.attribute or {}) do
+				if attr.name == "imports" and attr.explicitlySpecified then
+					for _, entry in ipairs(attr.stringListValue or {}) do
+						local dir = collapse(root .. "/" .. (pkg or "") .. "/" .. entry)
+						if not seen[dir] then
+							seen[dir] = true
+							roots[#roots + 1] = dir
+						end
+					end
+				end
+			end
+		end
+	end
+	table.sort(roots)
+	return roots
+end
+
+---Query the workspace for first-party import roots.
+---@param on_done fun(roots: string[]|nil)
+local function import_roots(root, on_done)
+	require("bzl.cli").run({ "query", 'kind("py_.*", //...)', "--output=streamed_jsonproto" }, function(result)
+		if result.code ~= 0 then
+			vim.notify("bzl.nvim: bazel query for imports failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
+			on_done(nil)
+			return
+		end
+		on_done(M.parse_import_roots(result.stdout or "", root))
+	end)
+end
+
+---Discover site-packages under the workspace's bazel external root plus
+---first-party import roots, and push them to the attached python
+---language servers. `on_done` is called exactly once; nil means the
+---discovery failed.
 ---@param on_done fun(result: { paths: integer, clients: integer }|nil)
 function M.sync(on_done)
 	local cli = require("bzl.cli")
@@ -67,11 +126,22 @@ function M.sync(on_done)
 		end
 		local output_base = vim.trim(result.stdout or "")
 		local paths = M.site_packages(output_base .. "/external")
-		if root then
-			table.insert(paths, 1, root)
+		if not root then
+			local clients = M.push_extra_paths(paths)
+			on_done({ paths = #paths, clients = clients })
+			return
 		end
-		local clients = M.push_extra_paths(paths)
-		on_done({ paths = #paths, clients = clients })
+		table.insert(paths, 1, root)
+		import_roots(root, function(roots)
+			-- push what we have even if the roots query failed
+			for _, dir in ipairs(roots or {}) do
+				if dir ~= root then
+					paths[#paths + 1] = dir
+				end
+			end
+			local clients = M.push_extra_paths(paths)
+			on_done({ paths = #paths, clients = clients })
+		end)
 	end)
 	if not started then
 		on_done(nil)

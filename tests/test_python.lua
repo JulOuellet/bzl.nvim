@@ -20,6 +20,46 @@ T["site_packages"]["returns an empty list for a missing directory"] = function()
 	MiniTest.expect.equality(python.site_packages("/definitely/not/here"), {})
 end
 
+T["parse_import_roots"] = MiniTest.new_set()
+
+---@param name string
+---@param imports string[]
+---@param explicit boolean|nil
+local function rule_line(name, imports, explicit)
+	return vim.json.encode({
+		type = "RULE",
+		rule = {
+			name = name,
+			attribute = {
+				{ name = "imports", explicitlySpecified = explicit ~= false, stringListValue = imports },
+			},
+		},
+	})
+end
+
+T["parse_import_roots"]["derives roots relative to the rule's package"] = function()
+	local output = table.concat({
+		rule_line("//common/libs/python:enums", { "enums" }),
+		rule_line("//services/api:lib", { "..", "." }),
+	}, "\n")
+	MiniTest.expect.equality(python.parse_import_roots(output, "/ws"), {
+		"/ws/common/libs/python/enums",
+		"/ws/services",
+		"/ws/services/api",
+	})
+end
+
+T["parse_import_roots"]["skips defaults, duplicates and noise"] = function()
+	local output = table.concat({
+		rule_line("//a:x", { "." }, false), -- not explicitly specified
+		rule_line("//b:x", { "." }),
+		rule_line("//b:y", { "." }), -- duplicate root
+		"not json at all",
+		vim.json.encode({ type = "SOURCE_FILE" }),
+	}, "\n")
+	MiniTest.expect.equality(python.parse_import_roots(output, "/ws"), { "/ws/b" })
+end
+
 T["push_extra_paths"] = MiniTest.new_set()
 
 T["push_extra_paths"]["updates settings and notifies each client"] = function()
