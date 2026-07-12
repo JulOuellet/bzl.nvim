@@ -56,7 +56,10 @@ end
 ---`on_done` is called exactly once; nil means the discovery failed.
 ---@param on_done fun(result: { paths: integer, clients: integer }|nil)
 function M.sync(on_done)
-	local started = require("bzl.cli").run({ "info", "output_base" }, function(result)
+	local cli = require("bzl.cli")
+	local root = cli.workspace_root()
+
+	local started = cli.run({ "info", "output_base" }, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel info failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
 			on_done(nil)
@@ -64,6 +67,9 @@ function M.sync(on_done)
 		end
 		local output_base = vim.trim(result.stdout or "")
 		local paths = M.site_packages(output_base .. "/external")
+		if root then
+			table.insert(paths, 1, root)
+		end
 		local clients = M.push_extra_paths(paths)
 		on_done({ paths = #paths, clients = clients })
 	end)

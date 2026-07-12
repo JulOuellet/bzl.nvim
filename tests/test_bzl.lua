@@ -63,8 +63,9 @@ T[":Bzl"]["sync re-queries through real bazel"] = function()
 	child.lua([[vim.wait(120000, function() return #_G.notifications >= 2 end, 100)]])
 	local notifications = child.lua_get([[_G.notifications]])
 	MiniTest.expect.equality(notifications[2]:find("synced 5 targets", 1, true) ~= nil, true)
-	-- the python step ran too: the fixture has no pip deps, so 0 paths
-	MiniTest.expect.equality(notifications[2]:find("0 python paths", 1, true) ~= nil, true)
+	-- the python step ran too: no pip deps in the fixture, but the
+	-- workspace root itself is always a search path
+	MiniTest.expect.equality(notifications[2]:find("1 python paths", 1, true) ~= nil, true)
 end
 
 T[":Bzl"]["registers the build-file autocmds"] = function()
