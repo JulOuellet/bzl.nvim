@@ -72,7 +72,7 @@ T["push_extra_paths"]["updates settings and notifies each client"] = function()
 		end,
 	}
 
-	local count = python.push_extra_paths({ "/a", "/b" }, { client })
+	local count = python.push_extra_paths({ "/a", "/b" }, nil, { client })
 
 	MiniTest.expect.equality(count, 1)
 	MiniTest.expect.equality(client.settings.python.analysis.extraPaths, { "/a", "/b" })
@@ -83,7 +83,40 @@ T["push_extra_paths"]["updates settings and notifies each client"] = function()
 end
 
 T["push_extra_paths"]["notifies zero clients without erroring"] = function()
-	MiniTest.expect.equality(python.push_extra_paths({ "/a" }, {}), 0)
+	MiniTest.expect.equality(python.push_extra_paths({ "/a" }, nil, {}), 0)
+end
+
+T["push_extra_paths"]["only updates clients rooted inside the workspace"] = function()
+	local function fake_client(root_dir)
+		return {
+			name = "pyright",
+			root_dir = root_dir,
+			notified = 0,
+			notify = function(self)
+				self.notified = self.notified + 1
+			end,
+		}
+	end
+	local service = fake_client("/ws/services/api")
+	local at_root = fake_client("/ws")
+	local other_workspace = fake_client("/elsewhere")
+	local prefix_lookalike = fake_client("/ws2/api")
+	local rootless = fake_client(nil)
+
+	local count = python.push_extra_paths({ "/p" }, "/ws", {
+		service,
+		at_root,
+		other_workspace,
+		prefix_lookalike,
+		rootless,
+	})
+
+	MiniTest.expect.equality(count, 3)
+	MiniTest.expect.equality(service.notified, 1)
+	MiniTest.expect.equality(at_root.notified, 1)
+	MiniTest.expect.equality(rootless.notified, 1)
+	MiniTest.expect.equality(other_workspace.notified, 0)
+	MiniTest.expect.equality(prefix_lookalike.notified, 0)
 end
 
 return T

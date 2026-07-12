@@ -29,26 +29,40 @@ function M.site_packages(external_dir)
 	return paths
 end
 
+---Whether a path is the root itself or lies inside it.
+local function inside(path, root)
+	return path == root or path:sub(1, #root + 1) == root .. "/"
+end
+
 ---Push extraPaths to python language servers via
 ---workspace/didChangeConfiguration; earlier paths are replaced, other
----settings are kept. The client list is injectable for testing and
----defaults to the attached pyright/basedpyright clients.
+---settings are kept. Only clients rooted inside the given workspace are
+---updated, so syncing one workspace never rewrites another's paths.
+---The client list is injectable for testing and defaults to the
+---attached pyright/basedpyright clients.
 ---@param paths string[]
+---@param root string|nil workspace root; nil disables the root filter
 ---@param clients vim.lsp.Client[]|nil
 ---@return integer clients number of clients notified
-function M.push_extra_paths(paths, clients)
+function M.push_extra_paths(paths, root, clients)
 	clients = clients
 		or vim.tbl_filter(function(client)
 			return PYTHON_CLIENTS[client.name] ~= nil
 		end, vim.lsp.get_clients())
 
+	local updated = 0
 	for _, client in ipairs(clients) do
-		client.settings = vim.tbl_deep_extend("force", client.settings or {}, {
-			python = { analysis = { extraPaths = paths } },
-		})
-		client:notify("workspace/didChangeConfiguration", { settings = client.settings })
+		-- clients without a root_dir (single-file mode) are included:
+		-- their workspace cannot be proven foreign
+		if not root or not client.root_dir or inside(client.root_dir, root) then
+			client.settings = vim.tbl_deep_extend("force", client.settings or {}, {
+				python = { analysis = { extraPaths = paths } },
+			})
+			client:notify("workspace/didChangeConfiguration", { settings = client.settings })
+			updated = updated + 1
+		end
 	end
-	return #clients
+	return updated
 end
 
 ---Collapse "." and ".." segments of an absolute path. Pure function.
@@ -127,7 +141,7 @@ function M.sync(on_done)
 		local output_base = vim.trim(result.stdout or "")
 		local paths = M.site_packages(output_base .. "/external")
 		if not root then
-			local clients = M.push_extra_paths(paths)
+			local clients = M.push_extra_paths(paths, nil)
 			on_done({ paths = #paths, clients = clients })
 			return
 		end
@@ -139,7 +153,7 @@ function M.sync(on_done)
 					paths[#paths + 1] = dir
 				end
 			end
-			local clients = M.push_extra_paths(paths)
+			local clients = M.push_extra_paths(paths, root)
 			on_done({ paths = #paths, clients = clients })
 		end)
 	end)
