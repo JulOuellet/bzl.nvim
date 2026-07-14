@@ -6,22 +6,12 @@ function M.setup(opts)
 	require("bzl.config").setup(opts)
 end
 
-function M.hello()
-	local config = require("bzl.config").get()
-	local msg = ("bzl.nvim is alive (bazel_cmd: %s)"):format(config.bazel_cmd)
-	vim.notify(msg, vim.log.levels.INFO, { title = "bzl.nvim" })
+function M.targets(...)
+	require("bzl.picker").targets(...)
 end
 
-function M.targets()
-	require("bzl.picker").targets()
-end
-
-function M.here()
-	require("bzl.picker").here()
-end
-
-function M.tree()
-	require("bzl.picker").tree()
+function M.tree(...)
+	require("bzl.picker").tree(...)
 end
 
 function M.rerun()
@@ -49,24 +39,29 @@ function M.sync()
 end
 
 M.subcommands = {
-	hello = M.hello,
 	targets = M.targets,
-	here = M.here,
 	tree = M.tree,
 	rerun = M.rerun,
 	sync = M.sync,
 }
 
----Entry point for the :Bzl user command.
+---Entry point for the :Bzl user command. Arguments after the
+---subcommand name are forwarded to it.
 ---@param fargs string[]
 function M.cmd(fargs)
-	local name = fargs[1] or "hello"
-	local subcommand = M.subcommands[name]
-	if not subcommand then
-		vim.notify(("bzl.nvim: unknown subcommand %q"):format(name), vim.log.levels.ERROR)
+	if #fargs == 0 then
+		vim.notify(
+			"bzl.nvim usage: Bzl targets|tree [testable|runnable] [here] | Bzl sync | Bzl rerun",
+			vim.log.levels.INFO
+		)
 		return
 	end
-	subcommand()
+	local subcommand = M.subcommands[fargs[1]]
+	if not subcommand then
+		vim.notify(("bzl.nvim: unknown subcommand %q"):format(fargs[1]), vim.log.levels.ERROR)
+		return
+	end
+	subcommand(unpack(fargs, 2))
 end
 
 return M

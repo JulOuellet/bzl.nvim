@@ -88,23 +88,31 @@ function M.package_of(path, root)
 	return dir:sub(#root + 2)
 end
 
----List the targets of a single package through a scoped query.
----Small and fast, so results are not cached.
----@param pkg string package path, "" for the root package
----@param on_done fun(targets: bzl.Target[]|nil)
-function M.list_package(pkg, on_done)
-	local scope = ("kind(rule, //%s:all)"):format(pkg)
-	local started = require("bzl.cli").run({ "query", scope, "--output=label_kind" }, function(result)
-		if result.code ~= 0 then
-			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
-			on_done(nil)
-			return
+---Directory scope of the file's "project": the nearest ancestor (up to
+---the workspace root) containing a *.bazelproject view file, falling
+---back to the file's package when no view files exist.
+---@param path string absolute file path
+---@param root string workspace root (absolute path)
+---@return string|nil workspace-relative dir, "" for the root, nil outside
+function M.project_of(path, root)
+	local dir = vim.fs.dirname(path)
+	while dir == root or dir:sub(1, #root + 1) == root .. "/" do
+		local handle = vim.uv.fs_scandir(dir)
+		while handle do
+			local name = vim.uv.fs_scandir_next(handle)
+			if not name then
+				break
+			end
+			if name:match("%.bazelproject$") then
+				return dir == root and "" or dir:sub(#root + 2)
+			end
 		end
-		on_done(M.parse(result.stdout or ""))
-	end)
-	if not started then
-		on_done(nil)
+		if dir == root then
+			break
+		end
+		dir = vim.fs.dirname(dir)
 	end
+	return M.package_of(path, root)
 end
 
 ---List all targets in the current workspace, from cache when warm.

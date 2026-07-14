@@ -21,14 +21,34 @@ end, {
 	nargs = "*",
 	desc = "bzl.nvim",
 	complete = function(_, line)
+		local function matching(candidates, prefix, used)
+			table.sort(candidates)
+			return vim.tbl_filter(function(name)
+				return not (used and used[name]) and name:find(prefix, 1, true) == 1
+			end, candidates)
+		end
+
+		-- later positions: picker arguments, minus the ones already typed
+		local sub, rest = line:match("^%s*Bzl%s+(%S+)%s+(.*)$")
+		if sub then
+			local args_for = {
+				targets = { "here", "runnable", "testable" },
+				tree = { "here", "runnable", "testable" },
+			}
+			if not args_for[sub] then
+				return {}
+			end
+			local used = {}
+			for word in rest:gmatch("(%S+)%s") do
+				used[word] = true
+			end
+			return matching(args_for[sub], rest:match("(%S*)$"), used)
+		end
+
 		local prefix = line:match("^%s*Bzl%s+(%S*)$")
 		if not prefix then
 			return {}
 		end
-		local names = vim.tbl_keys(require("bzl").subcommands)
-		table.sort(names)
-		return vim.tbl_filter(function(name)
-			return name:find(prefix, 1, true) == 1
-		end, names)
+		return matching(vim.tbl_keys(require("bzl").subcommands), prefix)
 	end,
 })

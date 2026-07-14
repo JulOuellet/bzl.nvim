@@ -123,24 +123,28 @@ T["integration"]["lists the fixture targets through real bazel"] = function()
 	child.stop()
 end
 
-T["integration"]["lists a single package through real bazel"] = function()
-	if vim.fn.executable(require("bzl.config").get().bazel_cmd) == 0 then
-		MiniTest.skip("bazel not available")
-	end
+T["project_of"] = MiniTest.new_set()
 
-	local child = MiniTest.new_child_neovim()
-	child.restart({ "-u", "scripts/minimal_init.lua" })
-	child.cmd("edit tests/fixture/lib/greet.sh")
-	child.lua([[
-		_G.bzl_result = nil
-		require("bzl.targets").list_package("lib", function(targets)
-			_G.bzl_result = targets or false
-		end)
-	]])
-	child.lua([[vim.wait(120000, function() return _G.bzl_result ~= nil end, 100)]])
-	local result = child.lua_get([[_G.bzl_result]])
-	MiniTest.expect.equality(result, { { kind = "sh_library", label = "//lib:greetings" } })
-	child.stop()
+local project_of = require("bzl.targets").project_of
+
+T["project_of"]["prefers the nearest bazelproject directory"] = function()
+	local tmp = vim.fn.tempname()
+	vim.fn.mkdir(tmp .. "/services/api/deep", "p")
+	vim.fn.writefile({}, tmp .. "/services/api/api.bazelproject")
+	MiniTest.expect.equality(project_of(tmp .. "/services/api/deep/main.py", tmp), "services/api")
+	vim.fn.delete(tmp, "rf")
+end
+
+T["project_of"]["returns the root for a root-level view file"] = function()
+	local tmp = vim.fn.tempname()
+	vim.fn.mkdir(tmp .. "/sub", "p")
+	vim.fn.writefile({}, tmp .. "/all.bazelproject")
+	MiniTest.expect.equality(project_of(tmp .. "/sub/f.py", tmp), "")
+	vim.fn.delete(tmp, "rf")
+end
+
+T["project_of"]["falls back to the package without view files"] = function()
+	MiniTest.expect.equality(project_of(fixture_root .. "/lib/greet.sh", fixture_root), "lib")
 end
 
 return T

@@ -18,6 +18,134 @@ function M.verb_for(kind)
 	return "build"
 end
 
+---Kind predicates for the optional filter argument of the pickers.
+M.kind_filters = {
+	testable = function(kind)
+		return kind:match("_test$") ~= nil
+	end,
+	-- binaries only: tests have their own filter
+	runnable = function(kind)
+		return kind:match("_binary$") ~= nil
+	end,
+}
+
+---Apply a named kind filter. Pure function.
+---nil filters nothing; an unknown name returns nil.
+---@param targets bzl.Target[]
+---@param name string|nil
+---@return bzl.Target[]|nil
+function M.filter_targets(targets, name)
+	if not name then
+		return targets
+	end
+	local predicate = M.kind_filters[name]
+	if not predicate then
+		return nil
+	end
+	return vim.tbl_filter(function(target)
+		return predicate(target.kind)
+	end, targets)
+end
+
+---Wildcard label for every target under a directory.
+---@param path string workspace-relative dir, "" for the whole workspace
+---@return string e.g. "//services/api/..."
+function M.subtree_label(path)
+	if path == "" then
+		return "//..."
+	end
+	return "//" .. path .. "/..."
+end
+
+---Whether a label lives in a directory or its subtree. Pure function.
+---@param label string full target label
+---@param dir string workspace-relative directory, "" matches everything
+---@return boolean
+function M.in_project(label, dir)
+	if dir == "" then
+		return true
+	end
+	local prefix = "//" .. dir
+	local boundary = label:sub(#prefix + 1, #prefix + 1)
+	return label:sub(1, #prefix) == prefix and (boundary == ":" or boundary == "/")
+end
+
+---Parse picker arguments: kind filters plus the "here" scope keyword.
+---Notifies and returns nil on unknown arguments.
+---@return { filter: string|nil, here: boolean|nil }|nil
+local function parse_args(...)
+	local opts = {}
+	for _, arg in ipairs({ ... }) do
+		if arg == "here" then
+			opts.here = true
+		elseif M.kind_filters[arg] then
+			opts.filter = arg
+		else
+			local valid = vim.tbl_keys(M.kind_filters)
+			table.sort(valid)
+			vim.notify(
+				("bzl.nvim: unknown argument %q (valid: here, %s)"):format(arg, table.concat(valid, ", ")),
+				vim.log.levels.ERROR
+			)
+			return nil
+		end
+	end
+	return opts
+end
+
+---Resolve the current buffer's project scope, notifying on failure.
+---@param root string|nil workspace root
+---@return string|nil project workspace-relative dir, "" for the root
+local function resolve_project(root)
+	if not root then
+		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
+		return nil
+	end
+	local file = vim.api.nvim_buf_get_name(0)
+	if file == "" then
+		vim.notify("bzl.nvim: the current buffer has no file", vim.log.levels.WARN)
+		return nil
+	end
+	local project = require("bzl.targets").project_of(file, root)
+	if not project then
+		vim.notify("bzl.nvim: this file is not inside a bazel package", vim.log.levels.WARN)
+		return nil
+	end
+	return project
+end
+
+---@param base string
+---@param project string|nil
+---@param filter string|nil
+local function title_for(base, project, filter)
+	local parts = {}
+	if project and project ~= "" then
+		parts[#parts + 1] = "//" .. project
+	end
+	if filter then
+		parts[#parts + 1] = filter
+	end
+	if #parts == 0 then
+		return base
+	end
+	return base .. " (" .. table.concat(parts, ", ") .. ")"
+end
+
+---Narrow a target list by kind filter and project scope.
+---@param targets bzl.Target[]|nil
+---@param filter string|nil
+---@param project string|nil
+---@return bzl.Target[]|nil
+local function narrow(targets, filter, project)
+	targets = targets and M.filter_targets(targets, filter)
+	if targets and project then
+		targets = vim.tbl_filter(function(target)
+			return M.in_project(target.label, project)
+		end, targets)
+	end
+	return targets
+end
+
 ---Build a target quietly, notifying the outcome.
 ---@param label string
 local function build(label)
@@ -92,13 +220,15 @@ local PICKER_KEYS = {
 	["<C-g>"] = { "bzl_goto", mode = { "n", "i" } },
 }
 
----Open the target picker over whatever `fetch` produces.
+---Open the flat target picker over whatever `fetch` produces.
 ---`root` is captured by callers while the current buffer is still the
 ---user's file; picker callbacks run with the picker's own buffer current.
 ---@param root string|nil workspace root
 ---@param title string
 ---@param fetch fun(on_done: fun(targets: bzl.Target[]|nil))
-local function open_picker(root, title, fetch)
+---@param filter string|nil validated kind filter name
+---@param project string|nil validated project scope
+local function open_picker(root, title, fetch, filter, project)
 	local ok, snacks = pcall(require, "snacks")
 	if not ok then
 		vim.notify("bzl.nvim: the target picker requires snacks.nvim", vim.log.levels.ERROR)
@@ -108,6 +238,7 @@ local function open_picker(root, title, fetch)
 	local locate = make_locate(root)
 
 	fetch(function(targets)
+		targets = narrow(targets, filter, project)
 		if not targets then
 			return
 		end
@@ -142,42 +273,36 @@ local function open_picker(root, title, fetch)
 	end)
 end
 
----Open a snacks picker over all targets in the current workspace.
----Requires snacks.nvim; reports an error if it is not installed.
-function M.targets()
+---Open a flat picker over workspace targets. Arguments, in any order:
+---a kind filter ("testable"/"runnable") and "here" to scope to the
+---current project (nearest *.bazelproject directory, else the package).
+function M.targets(...)
+	local opts = parse_args(...)
+	if not opts then
+		return
+	end
 	local root = require("bzl.cli").workspace_root()
-	open_picker(root, "Bazel targets", function(on_done)
+	local project
+	if opts.here then
+		project = resolve_project(root)
+		if not project then
+			return
+		end
+	end
+	open_picker(root, title_for("Bazel targets", project, opts.filter), function(on_done)
 		require("bzl.targets").list(on_done)
-	end)
+	end, opts.filter, project)
 end
 
----Open the picker over only the targets of the current buffer's
----package: the nearest BUILD file at or above the file.
-function M.here()
-	local root = require("bzl.cli").workspace_root()
-	if not root then
-		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
+---Browse targets as a collapsible directory tree. Takes the same
+---arguments as M.targets(); scoped trees open fully expanded.
+---<CR> expands/collapses directories and acts on targets; on
+---directories, bzl_test/bzl_build act on the whole subtree.
+function M.tree(...)
+	local opts = parse_args(...)
+	if not opts then
 		return
 	end
-	local file = vim.api.nvim_buf_get_name(0)
-	if file == "" then
-		vim.notify("bzl.nvim: the current buffer has no file", vim.log.levels.WARN)
-		return
-	end
-	local pkg = require("bzl.targets").package_of(file, root)
-	if not pkg then
-		vim.notify("bzl.nvim: this file is not inside a bazel package", vim.log.levels.WARN)
-		return
-	end
-	open_picker(root, ("Bazel targets (//%s)"):format(pkg), function(on_done)
-		require("bzl.targets").list_package(pkg, on_done)
-	end)
-end
-
----Browse all targets as a collapsible directory tree. <CR> expands or
----collapses directories and acts on targets; typing searches every
----target while keeping its directory chain visible.
-function M.tree()
 	local ok, snacks = pcall(require, "snacks")
 	if not ok then
 		vim.notify("bzl.nvim: the target picker requires snacks.nvim", vim.log.levels.ERROR)
@@ -185,14 +310,30 @@ function M.tree()
 	end
 
 	local root = require("bzl.cli").workspace_root()
+	local project
+	if opts.here then
+		project = resolve_project(root)
+		if not project then
+			return
+		end
+	end
 	local locate = make_locate(root)
 
 	require("bzl.targets").list(function(targets)
+		targets = narrow(targets, opts.filter, project)
 		if not targets then
 			return
 		end
 		local tree = require("bzl.tree")
 		local forest = tree.build(targets)
+		-- scoped trees are small: open everything for flat-list speed
+		if project then
+			for _, node in ipairs(forest.nodes) do
+				if node.dir then
+					node.open = true
+				end
+			end
+		end
 		local searching = false
 
 		---Wrap an action so it only applies to target leaves.
@@ -205,7 +346,7 @@ function M.tree()
 		end
 
 		snacks.picker.pick({
-			title = "Bazel tree",
+			title = title_for("Bazel tree", project, opts.filter),
 			-- a function finder: re-run on every picker:find(), which is
 			-- how expand/collapse refreshes the list
 			finder = function(_, ctx)
@@ -277,12 +418,23 @@ function M.tree()
 				bzl_run = leaf(function(picker, item)
 					act(picker, item, "run")
 				end),
-				bzl_test = leaf(function(picker, item)
-					act(picker, item, "test")
-				end),
-				bzl_build = leaf(function(picker, item)
-					act(picker, item, "build")
-				end),
+				bzl_test = function(picker, item)
+					if item.dir then
+						-- like intellij's "run all tests in folder"
+						picker:close()
+						require("bzl.runner").execute("test", M.subtree_label(item.path))
+					else
+						act(picker, item, "test")
+					end
+				end,
+				bzl_build = function(picker, item)
+					if item.dir then
+						picker:close()
+						build(M.subtree_label(item.path))
+					else
+						act(picker, item, "build")
+					end
+				end,
 				bzl_goto = leaf(function(picker, item)
 					goto_target(picker, item, locate)
 				end),

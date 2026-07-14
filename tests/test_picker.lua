@@ -32,6 +32,51 @@ T["make_items"]["returns an empty list for no targets"] = function()
 	MiniTest.expect.equality(make_items({}), {})
 end
 
+T["filter_targets"] = MiniTest.new_set()
+
+local filter_targets = require("bzl.picker").filter_targets
+
+local mixed = {
+	{ kind = "sh_binary", label = "//:hello" },
+	{ kind = "sh_test", label = "//:hello_test" },
+	{ kind = "sh_library", label = "//lib:greetings" },
+}
+
+T["filter_targets"]["testable keeps only test kinds"] = function()
+	MiniTest.expect.equality(filter_targets(mixed, "testable"), { { kind = "sh_test", label = "//:hello_test" } })
+end
+
+T["filter_targets"]["runnable keeps binaries but not tests"] = function()
+	MiniTest.expect.equality(filter_targets(mixed, "runnable"), { { kind = "sh_binary", label = "//:hello" } })
+end
+
+T["filter_targets"]["nil filter returns the list unchanged"] = function()
+	MiniTest.expect.equality(filter_targets(mixed, nil), mixed)
+end
+
+T["filter_targets"]["unknown filter returns nil"] = function()
+	MiniTest.expect.equality(filter_targets(mixed, "bogus"), nil)
+end
+
+T["subtree_label"] = MiniTest.new_set()
+
+T["subtree_label"]["builds wildcard labels"] = function()
+	local subtree_label = require("bzl.picker").subtree_label
+	MiniTest.expect.equality(subtree_label(""), "//...")
+	MiniTest.expect.equality(subtree_label("services/api"), "//services/api/...")
+end
+
+T["in_project"] = MiniTest.new_set()
+
+T["in_project"]["matches the directory and its subtree only"] = function()
+	local in_project = require("bzl.picker").in_project
+	MiniTest.expect.equality(in_project("//services:x", "services"), true)
+	MiniTest.expect.equality(in_project("//services/api:x", "services"), true)
+	MiniTest.expect.equality(in_project("//services2:x", "services"), false)
+	MiniTest.expect.equality(in_project("//lib:x", "services"), false)
+	MiniTest.expect.equality(in_project("//anything:x", ""), true)
+end
+
 T["verb_for"] = MiniTest.new_set()
 
 local verb_for = require("bzl.picker").verb_for

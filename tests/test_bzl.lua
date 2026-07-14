@@ -29,8 +29,46 @@ end
 T[":Bzl"]["completes subcommands"] = function()
 	MiniTest.expect.equality(
 		child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]),
-		{ "hello", "here", "rerun", "sync", "targets", "tree" }
+		{ "rerun", "sync", "targets", "tree" }
 	)
+end
+
+T[":Bzl"]["completes picker arguments, minus the ones already used"] = function()
+	MiniTest.expect.equality(
+		child.lua_get([[vim.fn.getcompletion("Bzl tree ", "cmdline")]]),
+		{ "here", "runnable", "testable" }
+	)
+	MiniTest.expect.equality(
+		child.lua_get([[vim.fn.getcompletion("Bzl targets testable ", "cmdline")]]),
+		{ "here", "runnable" }
+	)
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync ", "cmdline")]]), {})
+end
+
+T[":Bzl"]["rejects an unknown picker argument"] = function()
+	child.lua([[
+		_G.notifications = {}
+		vim.notify = function(msg)
+			table.insert(_G.notifications, msg)
+		end
+	]])
+	child.cmd("Bzl tree bogus")
+	local notifications = child.lua_get([[_G.notifications]])
+	MiniTest.expect.equality(#notifications, 1)
+	MiniTest.expect.equality(notifications[1]:find('unknown argument "bogus"', 1, true) ~= nil, true)
+end
+
+T[":Bzl"]["prints usage without a subcommand"] = function()
+	child.lua([[
+		_G.notifications = {}
+		vim.notify = function(msg)
+			table.insert(_G.notifications, msg)
+		end
+	]])
+	child.cmd("Bzl")
+	local notifications = child.lua_get([[_G.notifications]])
+	MiniTest.expect.equality(#notifications, 1)
+	MiniTest.expect.equality(notifications[1]:find("usage", 1, true) ~= nil, true)
 end
 
 T[":Bzl"]["sync reports progress, then the failure"] = function()
