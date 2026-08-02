@@ -10,10 +10,6 @@ function M.targets(...)
 	require("bzl.picker").targets(...)
 end
 
-function M.tree(...)
-	require("bzl.picker").tree(...)
-end
-
 function M.rerun()
 	require("bzl.runner").rerun()
 end
@@ -40,7 +36,6 @@ end
 
 M.subcommands = {
 	targets = M.targets,
-	tree = M.tree,
 	rerun = M.rerun,
 	sync = M.sync,
 }
@@ -50,10 +45,7 @@ M.subcommands = {
 ---@param fargs string[]
 function M.cmd(fargs)
 	if #fargs == 0 then
-		vim.notify(
-			"bzl.nvim usage: Bzl targets|tree [testable|runnable] [here] | Bzl sync | Bzl rerun",
-			vim.log.levels.INFO
-		)
+		vim.notify("bzl.nvim usage: Bzl targets [testable|runnable] [here] | Bzl sync | Bzl rerun", vim.log.levels.INFO)
 		return
 	end
 	local subcommand = M.subcommands[fargs[1]]

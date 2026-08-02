@@ -33,7 +33,6 @@ end, {
 		if sub then
 			local args_for = {
 				targets = { "here", "runnable", "testable" },
-				tree = { "here", "runnable", "testable" },
 			}
 			if not args_for[sub] then
 				return {}

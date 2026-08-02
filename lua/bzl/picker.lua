@@ -47,16 +47,6 @@ function M.filter_targets(targets, name)
 	end, targets)
 end
 
----Wildcard label for every target under a directory.
----@param path string workspace-relative dir, "" for the whole workspace
----@return string e.g. "//services/api/..."
-function M.subtree_label(path)
-	if path == "" then
-		return "//..."
-	end
-	return "//" .. path .. "/..."
-end
-
 ---Whether a label lives in a directory or its subtree. Pure function.
 ---@param label string full target label
 ---@param dir string workspace-relative directory, "" matches everything
@@ -236,6 +226,10 @@ local function open_picker(root, title, fetch, filter, project)
 	end
 
 	local locate = make_locate(root)
+	local layout
+	if not require("bzl.config").get().picker.preview then
+		layout = { preview = false }
+	end
 
 	fetch(function(targets)
 		targets = narrow(targets, filter, project)
@@ -244,6 +238,7 @@ local function open_picker(root, title, fetch, filter, project)
 		end
 		snacks.picker.pick({
 			title = title,
+			layout = layout,
 			items = M.make_items(targets),
 			format = function(item)
 				return { { item.label }, { " " }, { item.kind, "Comment" } }
@@ -292,156 +287,6 @@ function M.targets(...)
 	open_picker(root, title_for("Bazel targets", project, opts.filter), function(on_done)
 		require("bzl.targets").list(on_done)
 	end, opts.filter, project)
-end
-
----Browse targets as a collapsible directory tree. Takes the same
----arguments as M.targets(); scoped trees open fully expanded.
----<CR> expands/collapses directories and acts on targets; on
----directories, bzl_test/bzl_build act on the whole subtree.
-function M.tree(...)
-	local opts = parse_args(...)
-	if not opts then
-		return
-	end
-	local ok, snacks = pcall(require, "snacks")
-	if not ok then
-		vim.notify("bzl.nvim: the target picker requires snacks.nvim", vim.log.levels.ERROR)
-		return
-	end
-
-	local root = require("bzl.cli").workspace_root()
-	local project
-	if opts.here then
-		project = resolve_project(root)
-		if not project then
-			return
-		end
-	end
-	local locate = make_locate(root)
-
-	require("bzl.targets").list(function(targets)
-		targets = narrow(targets, opts.filter, project)
-		if not targets then
-			return
-		end
-		local tree = require("bzl.tree")
-		local forest = tree.build(targets)
-		-- scoped trees are small: open everything for flat-list speed
-		if project then
-			for _, node in ipairs(forest.nodes) do
-				if node.dir then
-					node.open = true
-				end
-			end
-		end
-		local searching = false
-
-		---Wrap an action so it only applies to target leaves.
-		local function leaf(action)
-			return function(picker, item)
-				if not item.dir then
-					action(picker, item)
-				end
-			end
-		end
-
-		snacks.picker.pick({
-			title = title_for("Bazel tree", project, opts.filter),
-			-- a function finder: re-run on every picker:find(), which is
-			-- how expand/collapse refreshes the list
-			finder = function(_, ctx)
-				-- while a pattern is typed, all nodes compete in the fuzzy
-				-- match and matches keep their ancestors via keep_parents;
-				-- otherwise show only the expanded part of the tree
-				local searching_now = not ctx.filter:is_empty()
-				ctx.picker.matcher.opts.keep_parents = searching_now
-				local items = {}
-				for _, node in ipairs(forest.nodes) do
-					if searching_now or tree.visible(node) then
-						items[#items + 1] = node
-					end
-				end
-				return items
-			end,
-			sort = { fields = { "sort" } },
-			filter = {
-				-- trigger a re-find when the pattern flips empty/non-empty
-				transform = function(_, filter)
-					local searching_now = not filter:is_empty()
-					if searching ~= searching_now then
-						searching = searching_now
-						return true
-					end
-				end,
-			},
-			format = function(item)
-				local depth = 0
-				local parent = item.parent
-				while parent and not parent.root do
-					depth = depth + 1
-					parent = parent.parent
-				end
-				local indent = string.rep("  ", depth)
-				if item.dir then
-					local icon = item.open and " " or " "
-					return { { indent }, { icon .. item.name, "SnacksPickerDirectory" } }
-				end
-				return { { indent }, { item.name }, { " " }, { item.kind, "Comment" } }
-			end,
-			confirm = function(picker, item)
-				if item.dir then
-					item.open = not item.open
-					picker.list:set_target()
-					picker:find()
-				else
-					act(picker, item, M.verb_for(item.kind))
-				end
-			end,
-			preview = function(ctx)
-				local item = ctx.item
-				if not item.dir then
-					return preview_target(ctx, locate)
-				end
-				if root then
-					local dir = item.path == "" and root or (root .. "/" .. item.path)
-					for _, build_name in ipairs({ "BUILD.bazel", "BUILD" }) do
-						if vim.uv.fs_stat(dir .. "/" .. build_name) then
-							item.file = dir .. "/" .. build_name
-							item.pos = nil
-							return require("snacks.picker.preview").file(ctx)
-						end
-					end
-				end
-				ctx.preview:notify("no BUILD file in //" .. item.path, "warn")
-			end,
-			actions = {
-				bzl_run = leaf(function(picker, item)
-					act(picker, item, "run")
-				end),
-				bzl_test = function(picker, item)
-					if item.dir then
-						-- like intellij's "run all tests in folder"
-						picker:close()
-						require("bzl.runner").execute("test", M.subtree_label(item.path))
-					else
-						act(picker, item, "test")
-					end
-				end,
-				bzl_build = function(picker, item)
-					if item.dir then
-						picker:close()
-						build(M.subtree_label(item.path))
-					else
-						act(picker, item, "build")
-					end
-				end,
-				bzl_goto = leaf(function(picker, item)
-					goto_target(picker, item, locate)
-				end),
-			},
-			win = { input = { keys = PICKER_KEYS } },
-		})
-	end)
 end
 
 ---Map targets to picker items. Pure function.

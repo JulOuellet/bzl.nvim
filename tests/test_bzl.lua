@@ -13,6 +13,7 @@ T["config"] = MiniTest.new_set()
 
 T["config"]["applies defaults without setup()"] = function()
 	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().bazel_cmd]]), "bazel")
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().picker.preview]]), false)
 end
 
 T["config"]["setup() overrides defaults"] = function()
@@ -27,15 +28,12 @@ T[":Bzl"]["is registered"] = function()
 end
 
 T[":Bzl"]["completes subcommands"] = function()
-	MiniTest.expect.equality(
-		child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]),
-		{ "rerun", "sync", "targets", "tree" }
-	)
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]), { "rerun", "sync", "targets" })
 end
 
 T[":Bzl"]["completes picker arguments, minus the ones already used"] = function()
 	MiniTest.expect.equality(
-		child.lua_get([[vim.fn.getcompletion("Bzl tree ", "cmdline")]]),
+		child.lua_get([[vim.fn.getcompletion("Bzl targets ", "cmdline")]]),
 		{ "here", "runnable", "testable" }
 	)
 	MiniTest.expect.equality(
@@ -52,7 +50,7 @@ T[":Bzl"]["rejects an unknown picker argument"] = function()
 			table.insert(_G.notifications, msg)
 		end
 	]])
-	child.cmd("Bzl tree bogus")
+	child.cmd("Bzl targets bogus")
 	local notifications = child.lua_get([[_G.notifications]])
 	MiniTest.expect.equality(#notifications, 1)
 	MiniTest.expect.equality(notifications[1]:find('unknown argument "bogus"', 1, true) ~= nil, true)

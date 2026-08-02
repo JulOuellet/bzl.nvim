@@ -58,14 +58,6 @@ T["filter_targets"]["unknown filter returns nil"] = function()
 	MiniTest.expect.equality(filter_targets(mixed, "bogus"), nil)
 end
 
-T["subtree_label"] = MiniTest.new_set()
-
-T["subtree_label"]["builds wildcard labels"] = function()
-	local subtree_label = require("bzl.picker").subtree_label
-	MiniTest.expect.equality(subtree_label(""), "//...")
-	MiniTest.expect.equality(subtree_label("services/api"), "//services/api/...")
-end
-
 T["in_project"] = MiniTest.new_set()
 
 T["in_project"]["matches the directory and its subtree only"] = function()
@@ -123,6 +115,27 @@ T["targets"]["degrades gracefully without snacks"] = function()
 	MiniTest.expect.equality(#notifications, 1)
 	MiniTest.expect.equality(notifications[1].msg, "bzl.nvim: the target picker requires snacks.nvim")
 	MiniTest.expect.equality(notifications[1].level, vim.log.levels.ERROR)
+end
+
+T["targets"]["hides the preview by default and can show it initially"] = function()
+	child.lua([[
+		_G.layouts = {}
+		package.loaded["snacks"] = {
+			picker = {
+				pick = function(opts)
+					table.insert(_G.layouts, opts.layout or false)
+				end,
+			},
+		}
+		require("bzl.targets").list = function(on_done)
+			on_done({ { kind = "sh_binary", label = "//:hello" } })
+		end
+		local picker = require("bzl.picker")
+		picker.targets()
+		require("bzl.config").setup({ picker = { preview = true } })
+		picker.targets()
+	]])
+	MiniTest.expect.equality(child.lua_get([[_G.layouts]]), { { preview = false }, false })
 end
 
 return T

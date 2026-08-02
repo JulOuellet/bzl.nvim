@@ -3,6 +3,10 @@ local M = {}
 M.defaults = {
 	-- Binary used for all bazel invocations, e.g. "bazelisk" or an absolute path.
 	bazel_cmd = "bazel",
+	picker = {
+		-- Show the BUILD-file preview panel when the picker opens.
+		preview = false,
+	},
 	runner = {
 		-- Height of the terminal split that shows run/test output.
 		height = 15,
