@@ -15,13 +15,13 @@ end
 ---@field stdout string|nil
 ---@field stderr string|nil
 
----Run bazel asynchronously from the workspace root.
+---Run bazel asynchronously from a workspace root.
 ---`on_done` always runs on the main loop, so it may use any nvim API.
+---@param root string|nil workspace root
 ---@param args string[] bazel arguments, e.g. { "query", "//..." }
 ---@param on_done fun(result: bzl.CliResult)
 ---@return boolean started false if no workspace or the binary could not be spawned
-function M.run(args, on_done)
-	local root = M.workspace_root()
+function M.run(root, args, on_done)
 	if not root then
 		vim.notify(
 			"bzl.nvim: no bazel workspace found (no MODULE.bazel or WORKSPACE above this file)",

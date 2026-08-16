@@ -28,7 +28,7 @@ T[":Bzl"]["is registered"] = function()
 end
 
 T[":Bzl"]["completes subcommands"] = function()
-	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]), { "rerun", "sync", "targets" })
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]), { "sync", "targets" })
 end
 
 T[":Bzl"]["completes picker arguments, minus the ones already used"] = function()
@@ -102,6 +102,28 @@ T[":Bzl"]["sync re-queries through real bazel"] = function()
 	-- the python step ran too: no pip deps in the fixture, but the
 	-- workspace root itself is always a search path
 	MiniTest.expect.equality(notifications[2]:find("1 python paths", 1, true) ~= nil, true)
+end
+
+T[":Bzl"]["sync keeps its workspace when the current buffer changes"] = function()
+	child.cmd("edit tests/fixture/BUILD.bazel")
+	child.lua([[
+		_G.sync_roots = {}
+		require("bzl.targets").list = function(root, on_done)
+			_G.sync_roots.targets = root
+			vim.cmd("enew")
+			on_done({})
+		end
+		package.loaded["bzl.python"] = {
+			sync = function(root, on_done)
+				_G.sync_roots.python = root
+				on_done({ paths = 0, clients = 0 })
+			end,
+		}
+		require("bzl").sync()
+	]])
+	local roots = child.lua_get([[_G.sync_roots]])
+	MiniTest.expect.equality(roots.python, roots.targets)
+	MiniTest.expect.equality(roots.targets:match("tests/fixture$"), "tests/fixture")
 end
 
 T[":Bzl"]["registers the build-file autocmds"] = function()

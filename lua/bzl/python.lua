@@ -113,7 +113,11 @@ end
 ---Query the workspace for first-party import roots.
 ---@param on_done fun(roots: string[]|nil)
 local function import_roots(root, on_done)
-	require("bzl.cli").run({ "query", 'kind("py_.*", //...)', "--output=streamed_jsonproto" }, function(result)
+	local started = require("bzl.cli").run(root, {
+		"query",
+		'kind("py_.*", //...)',
+		"--output=streamed_jsonproto",
+	}, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel query for imports failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
 			on_done(nil)
@@ -121,18 +125,21 @@ local function import_roots(root, on_done)
 		end
 		on_done(M.parse_import_roots(result.stdout or "", root))
 	end)
+	if not started then
+		on_done(nil)
+	end
 end
 
 ---Discover site-packages under the workspace's bazel external root plus
 ---first-party import roots, and push them to the attached python
 ---language servers. `on_done` is called exactly once; nil means the
 ---discovery failed.
+---@param root string|nil workspace root
 ---@param on_done fun(result: { paths: integer, clients: integer }|nil)
-function M.sync(on_done)
+function M.sync(root, on_done)
 	local cli = require("bzl.cli")
-	local root = cli.workspace_root()
 
-	local started = cli.run({ "info", "output_base" }, function(result)
+	local started = cli.run(root, { "info", "output_base" }, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel info failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
 			on_done(nil)

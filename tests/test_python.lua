@@ -119,4 +119,29 @@ T["push_extra_paths"]["only updates clients rooted inside the workspace"] = func
 	MiniTest.expect.equality(prefix_lookalike.notified, 0)
 end
 
+T["sync"] = MiniTest.new_set()
+
+T["sync"]["completes when the imports query cannot start"] = function()
+	local cli = require("bzl.cli")
+	local original_run = cli.run
+	local calls = 0
+	cli.run = function(_, args, on_done)
+		calls = calls + 1
+		if args[1] == "info" then
+			on_done({ code = 0, stdout = "/definitely/not/here\n" })
+			return true
+		end
+		return false
+	end
+
+	local results = {}
+	python.sync("/workspace", function(result)
+		results[#results + 1] = result
+	end)
+	cli.run = original_run
+
+	MiniTest.expect.equality(calls, 2)
+	MiniTest.expect.equality(results, { { paths = 1, clients = 0 } })
+end
+
 return T

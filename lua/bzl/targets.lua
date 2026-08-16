@@ -115,21 +115,21 @@ function M.project_of(path, root)
 	return M.package_of(path, root)
 end
 
----List all targets in the current workspace, from cache when warm.
+---List all targets in a workspace, from cache when warm.
 ---Errors are reported via vim.notify; `on_done` then receives nil, so
 ---callers can always rely on being called exactly once.
+---@param root string|nil workspace root
 ---@param on_done fun(targets: bzl.Target[]|nil)
 ---@param opts { refresh: boolean }|nil
-function M.list(on_done, opts)
+function M.list(root, on_done, opts)
 	local cli = require("bzl.cli")
 
-	local root = cli.workspace_root()
 	if root and cache[root] and not (opts and opts.refresh) then
 		on_done(cache[root])
 		return
 	end
 
-	local started = cli.run({ "query", "//...", "--output=label_kind" }, function(result)
+	local started = cli.run(root, { "query", "//...", "--output=label_kind" }, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
 			on_done(nil)
