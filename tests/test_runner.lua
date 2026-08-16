@@ -41,4 +41,66 @@ T["execute"]["opens a terminal split for a real run"] = function()
 	MiniTest.expect.equality(child.lua_get([[#vim.api.nvim_tabpage_list_wins(0)]]), 2)
 end
 
+T["execute"]["preserves the previous output when a new process cannot start"] = function()
+	child.lua([[
+		local config = require("bzl.config")
+		local runner = require("bzl.runner")
+		local root = vim.fn.getcwd()
+
+		config.setup({ bazel_cmd = "true" })
+		runner.execute(root, "run", "//:hello")
+		local current = vim.api.nvim_get_current_win()
+		_G.runner_win = vim.tbl_filter(function(win)
+			return win ~= current
+		end, vim.api.nvim_tabpage_list_wins(0))[1]
+		_G.previous_buf = vim.api.nvim_win_get_buf(_G.runner_win)
+
+		config.setup({ bazel_cmd = "bzl-nvim-command-that-does-not-exist" })
+		runner.execute(root, "run", "//:hello")
+	]])
+	MiniTest.expect.equality(
+		child.lua_get([[vim.api.nvim_win_get_buf(_G.runner_win)]]),
+		child.lua_get([[_G.previous_buf]])
+	)
+	MiniTest.expect.equality(child.lua_get([[vim.api.nvim_buf_is_valid(_G.previous_buf)]]), true)
+end
+
+T["execute"]["opens a runner in the current tab"] = function()
+	child.lua([[
+		local config = require("bzl.config")
+		local runner = require("bzl.runner")
+		local root = vim.fn.getcwd()
+
+		config.setup({ bazel_cmd = "true" })
+		runner.execute(root, "run", "//:hello")
+		vim.cmd("tabnew")
+		runner.execute(root, "run", "//:hello")
+	]])
+	MiniTest.expect.equality(child.lua_get([[#vim.api.nvim_tabpage_list_wins(0)]]), 2)
+end
+
+T["execute"]["does not reuse a window repurposed by the user"] = function()
+	child.lua([[
+		local config = require("bzl.config")
+		local runner = require("bzl.runner")
+		local root = vim.fn.getcwd()
+
+		config.setup({ bazel_cmd = "true" })
+		runner.execute(root, "run", "//:hello")
+		local current = vim.api.nvim_get_current_win()
+		_G.previous_runner_win = vim.tbl_filter(function(win)
+			return win ~= current
+		end, vim.api.nvim_tabpage_list_wins(0))[1]
+		_G.user_buf = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_win_set_buf(_G.previous_runner_win, _G.user_buf)
+
+		runner.execute(root, "run", "//:hello")
+	]])
+	MiniTest.expect.equality(
+		child.lua_get([[vim.api.nvim_win_get_buf(_G.previous_runner_win)]]),
+		child.lua_get([[_G.user_buf]])
+	)
+	MiniTest.expect.equality(child.lua_get([[#vim.api.nvim_tabpage_list_wins(0)]]), 3)
+end
+
 return T
