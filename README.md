@@ -16,7 +16,6 @@ output and LSP support for bazel-managed dependencies.
 - Run, test, and build targets; run and test output streams into a
   reusable terminal split
 - Toggle a target's BUILD definition preview while browsing; jump to it directly
-- Re-run the last run or test with a single command
 - `:Bzl sync` refreshes targets and configures the language server to
   resolve bazel-managed dependencies (see
   [supported languages](#supported-languages))
@@ -65,7 +64,6 @@ Calling `setup()` (or using `opts`) is optional; defaults apply otherwise.
 | --- | --- |
 | `:Bzl targets [testable\|runnable] [here]` | Flat fuzzy picker over targets |
 | `:Bzl sync` | Re-query targets and refresh language server import paths |
-| `:Bzl rerun` | Repeat the last run or test |
 
 Arguments can be combined in any order:
 

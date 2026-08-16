@@ -137,9 +137,10 @@ local function narrow(targets, filter, project)
 end
 
 ---Build a target quietly, notifying the outcome.
+---@param root string|nil workspace root
 ---@param label string
-local function build(label)
-	require("bzl.cli").run({ "build", label }, function(result)
+local function build(root, label)
+	require("bzl.cli").run(root, { "build", label }, function(result)
 		if result.code == 0 then
 			vim.notify("bzl.nvim: built " .. label, vim.log.levels.INFO)
 		else
@@ -150,13 +151,14 @@ end
 
 ---Close the picker and act on the item: run/test in the runner
 ---terminal, build quietly in the background.
+---@param root string|nil workspace root
 ---@param verb bzl.Verb
-local function act(picker, item, verb)
+local function act(root, picker, item, verb)
 	picker:close()
 	if verb == "build" then
-		build(item.label)
+		build(root, item.label)
 	else
-		require("bzl.runner").execute(verb, item.label)
+		require("bzl.runner").execute(root, verb, item.label)
 	end
 end
 
@@ -244,20 +246,20 @@ local function open_picker(root, title, fetch, filter, project)
 				return { { item.label }, { " " }, { item.kind, "Comment" } }
 			end,
 			confirm = function(picker, item)
-				act(picker, item, M.verb_for(item.kind))
+				act(root, picker, item, M.verb_for(item.kind))
 			end,
 			preview = function(ctx)
 				return preview_target(ctx, locate)
 			end,
 			actions = {
 				bzl_run = function(picker, item)
-					act(picker, item, "run")
+					act(root, picker, item, "run")
 				end,
 				bzl_test = function(picker, item)
-					act(picker, item, "test")
+					act(root, picker, item, "test")
 				end,
 				bzl_build = function(picker, item)
-					act(picker, item, "build")
+					act(root, picker, item, "build")
 				end,
 				bzl_goto = function(picker, item)
 					goto_target(picker, item, locate)
@@ -285,7 +287,7 @@ function M.targets(...)
 		end
 	end
 	open_picker(root, title_for("Bazel targets", project, opts.filter), function(on_done)
-		require("bzl.targets").list(on_done)
+		require("bzl.targets").list(root, on_done)
 	end, opts.filter, project)
 end
 

@@ -127,7 +127,7 @@ T["targets"]["hides the preview by default and can show it initially"] = functio
 				end,
 			},
 		}
-		require("bzl.targets").list = function(on_done)
+		require("bzl.targets").list = function(_, on_done)
 			on_done({ { kind = "sh_binary", label = "//:hello" } })
 		end
 		local picker = require("bzl.picker")
@@ -136,6 +136,33 @@ T["targets"]["hides the preview by default and can show it initially"] = functio
 		picker.targets()
 	]])
 	MiniTest.expect.equality(child.lua_get([[_G.layouts]]), { { preview = false }, false })
+end
+
+T["targets"]["actions keep the workspace captured when the picker opened"] = function()
+	child.cmd("edit tests/fixture/BUILD.bazel")
+	child.lua([[
+		_G.expected_root = require("bzl.cli").workspace_root()
+		package.loaded["snacks"] = {
+			picker = {
+				pick = function(opts)
+					_G.picker_opts = opts
+				end,
+			},
+		}
+		require("bzl.targets").list = function(_, on_done)
+			on_done({ { kind = "sh_binary", label = "//:hello" } })
+		end
+		package.loaded["bzl.runner"] = {
+			execute = function(root)
+				_G.action_root = root
+			end,
+		}
+
+		require("bzl.picker").targets()
+		vim.cmd("enew")
+		_G.picker_opts.actions.bzl_run({ close = function() end }, _G.picker_opts.items[1])
+	]])
+	MiniTest.expect.equality(child.lua_get([[_G.action_root]]), child.lua_get([[_G.expected_root]]))
 end
 
 return T

@@ -4,9 +4,8 @@ local M = {}
 
 ---@class bzl.RunnerState
 ---@field win integer|nil runner split window
----@field buf integer|nil terminal buffer of the current/last run
+---@field buf integer|nil terminal buffer of the current run
 ---@field job integer|nil job id while a run is in flight
----@field last { verb: bzl.Verb, label: string }|nil
 local state = {}
 
 ---Open the runner split, reusing it if still on screen. Focus stays
@@ -25,10 +24,10 @@ end
 
 ---Run a bazel verb on a target label, streaming output into a terminal split.
 ---Any run still in flight is stopped and its buffer replaced.
+---@param root string|nil workspace root
 ---@param verb bzl.Verb
 ---@param label string
-function M.execute(verb, label)
-	local root = require("bzl.cli").workspace_root()
+function M.execute(root, verb, label)
 	if not root then
 		vim.notify(
 			"bzl.nvim: no bazel workspace found (no MODULE.bazel or WORKSPACE above this file)",
@@ -75,16 +74,6 @@ function M.execute(verb, label)
 	end
 
 	state.job = job
-	state.last = { verb = verb, label = label }
-end
-
----Repeat the most recent execute().
-function M.rerun()
-	if not state.last then
-		vim.notify("bzl.nvim: nothing to re-run yet", vim.log.levels.WARN)
-		return
-	end
-	M.execute(state.last.verb, state.last.label)
 end
 
 return M

@@ -101,7 +101,8 @@ T["integration"]["lists the fixture targets through real bazel"] = function()
 	child.cmd("edit tests/fixture/BUILD.bazel")
 	child.lua([[
 		_G.bzl_result = nil
-		require("bzl.targets").list(function(targets)
+		local root = require("bzl.cli").workspace_root()
+		require("bzl.targets").list(root, function(targets)
 			_G.bzl_result = targets or false
 		end)
 	]])
