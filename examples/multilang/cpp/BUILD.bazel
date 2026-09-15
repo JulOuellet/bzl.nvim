@@ -1,0 +1,22 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+cc_library(
+    name = "greeting",
+    srcs = ["greeting.cc"],
+    hdrs = ["include/greeting.h"],
+    include_prefix = "multilang",
+    strip_include_prefix = "include",
+)
+
+cc_binary(
+    name = "app",
+    srcs = ["main.cc"],
+    deps = [":greeting"],
+)
+
+cc_test(
+    name = "greeting_test",
+    size = "small",
+    srcs = ["greeting_test.cc"],
+    deps = [":greeting"],
+)

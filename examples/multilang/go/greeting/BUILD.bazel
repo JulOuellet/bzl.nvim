@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "greeting",
+    srcs = ["greeting.go"],
+    importpath = "example.com/bzl-multilang/greeting",
+    visibility = ["//go:__pkg__"],
+)
+
+go_test(
+    name = "greeting_test",
+    size = "small",
+    srcs = ["greeting_test.go"],
+    embed = [":greeting"],
+)

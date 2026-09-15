@@ -1,0 +1,23 @@
+load("@rules_java//java:defs.bzl", "java_binary", "java_library", "java_test")
+
+java_library(
+    name = "greeting",
+    srcs = ["src/demo/Greeting.java"],
+)
+
+java_binary(
+    name = "app",
+    srcs = ["src/demo/Main.java"],
+    main_class = "demo.Main",
+    deps = [":greeting"],
+)
+
+# A plain main-based test keeps this example independent of JUnit/Maven setup.
+java_test(
+    name = "greeting_test",
+    size = "small",
+    srcs = ["src/demo/GreetingTest.java"],
+    main_class = "demo.GreetingTest",
+    use_testrunner = False,
+    deps = [":greeting"],
+)

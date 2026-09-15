@@ -1,0 +1,12 @@
+# A convenient explicit suite; `bazel test //...` also discovers these tests.
+test_suite(
+    name = "smoke",
+    tests = [
+        "//cpp:greeting_test",
+        "//go/greeting:greeting_test",
+        "//java:greeting_test",
+        "//python:generated_test",
+        "//python:greeting_test",
+        "//rust:greeting_test",
+    ],
+)

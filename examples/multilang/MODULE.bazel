@@ -1,0 +1,35 @@
+module(
+    name = "bzl_multilang",
+    version = "0.1.0",
+)
+
+# Deliberately pinned: this is a reproducible playground, not a latest-version test.
+# rules_python 1.x exercises the site-packages layout currently supported by bzl.nvim.
+bazel_dep(name = "rules_python", version = "1.6.3")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_go", version = "0.58.3")
+bazel_dep(name = "rules_rust", version = "0.65.0")
+bazel_dep(name = "rules_java", version = "8.14.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    python_version = "3.12",
+    requirements_lock = "//python:requirements_lock.txt",
+)
+use_repo(pip, "pypi")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.24.6")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.89.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")

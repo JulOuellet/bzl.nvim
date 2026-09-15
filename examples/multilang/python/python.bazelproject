@@ -1,0 +1,5 @@
+directories:
+  python
+
+targets:
+  //python/...

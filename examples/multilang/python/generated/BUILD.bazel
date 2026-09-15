@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+genrule(
+    name = "generate_build_info",
+    srcs = ["build_info.py.in"],
+    outs = ["build_info.py"],
+    cmd = "cp $(location build_info.py.in) $@",
+)
+
+py_library(
+    name = "build_info",
+    srcs = [":generate_build_info"],
+    imports = ["."],
+    visibility = ["//python:__pkg__"],
+)

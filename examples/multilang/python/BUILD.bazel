@@ -1,0 +1,49 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+exports_files(["requirements_lock.txt"])
+
+py_library(
+    name = "greeting",
+    srcs = [
+        "src/acme/__init__.py",
+        "src/acme/greeting.py",
+    ],
+    imports = ["src"],
+    deps = ["@pypi//packaging"],
+)
+
+py_binary(
+    name = "app",
+    srcs = ["main.py"],
+    main = "main.py",
+    deps = [":greeting"],
+)
+
+py_test(
+    name = "greeting_test",
+    size = "small",
+    srcs = ["greeting_test.py"],
+    deps = [":greeting"],
+)
+
+py_binary(
+    name = "generated_app",
+    srcs = ["generated_main.py"],
+    main = "generated_main.py",
+    deps = ["//python/generated:build_info"],
+)
+
+py_test(
+    name = "generated_test",
+    size = "small",
+    srcs = ["generated_test.py"],
+    deps = ["//python/generated:build_info"],
+)
+
+py_test(
+    name = "failing_test",
+    size = "small",
+    srcs = ["failing_test.py"],
+    # Exercise failure output explicitly; keep the ordinary test suite green.
+    tags = ["manual"],
+)

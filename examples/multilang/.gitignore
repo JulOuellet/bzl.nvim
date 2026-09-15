@@ -1,0 +1,6 @@
+/bazel-*
+/.direnv/
+/compile_commands.json
+/rust-project.json
+/.bsp/
+__pycache__/

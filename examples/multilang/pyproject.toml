@@ -1,0 +1,6 @@
+# A language-server root marker and predictable diagnostics, not an alternate build.
+# Deliberately omit extraPaths and virtualenv settings: discovering Bazel's paths
+# is the behavior under test. Do not add executionEnvironments that override them.
+[tool.pyright]
+include = ["python"]
+typeCheckingMode = "basic"

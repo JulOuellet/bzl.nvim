@@ -1,0 +1,21 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+rust_library(
+    name = "greeting",
+    srcs = ["greeting.rs"],
+    crate_root = "greeting.rs",
+    edition = "2021",
+)
+
+rust_binary(
+    name = "app",
+    srcs = ["main.rs"],
+    edition = "2021",
+    deps = [":greeting"],
+)
+
+rust_test(
+    name = "greeting_test",
+    size = "small",
+    crate = ":greeting",
+)
