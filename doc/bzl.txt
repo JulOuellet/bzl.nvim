@@ -1,0 +1,108 @@
+*bzl.txt*  Bazel targets and language metadata for Neovim
+
+Requires Neovim 0.11+, Bazel/Bazelisk, and snacks.nvim for the picker.
+Language servers must be installed and configured separately.
+
+COMMANDS                                                        *bzl-commands*
+
+:Bzl targets [testable|runnable] [here]                         *:Bzl-targets*
+    Browse targets. `here` uses the nearest *.bazelproject directory, falling
+    back to the current Bazel package. Project-view contents are not parsed.
+
+:Bzl sync [here|target patterns...]                              *:Bzl-sync*
+    Refresh target discovery and configured language adapters. Default scope
+    is sync.targets (//...). Examples: >
+        :Bzl sync //python:app
+        :Bzl sync //python/... //go/...
+        :Bzl sync here
+<
+    May execute Bazel builds, materialize generated sources and download
+    dependencies. Not the same as Bazel's `bazel sync` repository command.
+    Use only in trusted workspaces. Exporter commands may overwrite their
+    generated compilation/project files.
+
+:Bzl cancel                                                   *:Bzl-cancel*
+    Cancel the active workspace's sync. Superseded results are ignored.
+
+:Bzl status                                                   *:Bzl-status*
+    Show the latest per-adapter discovery and client application results.
+    `ready` describes metadata, not proof of working LSP features.
+
+:checkhealth bzl                                               *bzl-health*
+    Check prerequisites and report sync results/configuration conflicts.
+
+CONFIGURATION                                                  *bzl-config*
+
+setup() is optional. Example: >lua
+    require('bzl').setup({
+      bazel_cmd = 'bazel',
+      startup_args = {},
+      command_args = { query = {}, info = {}, build = {}, run = {}, test = {} },
+      sync = {
+        targets = { '//...' },
+        inputs = {},
+        query_timeout = 120000,
+        build_timeout = 0,
+        cache = true,
+        languages = {
+          python = { enabled = true, mode = 'aspect', materialize = true },
+          cpp = { enabled = true, database = 'compile_commands.json', refresh = {} },
+          go = { enabled = true, driver_target = '@rules_go//go/tools/gopackagesdriver' },
+          rust = { enabled = true, project = 'rust-project.json', refresh = {} },
+        },
+      },
+      workspaces = {},
+      picker = { preview = false },
+      runner = { height = 15 },
+    })
+<
+startup_args precede the Bazel verb. command_args follow the matching verb.
+refresh is an argv list, e.g. { 'run', '//:refresh_compile_commands' }, not a
+shell command. Its scope/internal flags must be configured in the exporter.
+Timeouts are milliseconds; zero disables the timeout. workspaces maps absolute
+workspace paths to overrides. inputs lists extra cache input paths (for example
+imported bazelrc files or custom extension inputs).
+
+LANGUAGE INTEGRATION                                         *bzl-languages*
+
+Python: Pyright and basedpyright receive their own analysis.extraPaths settings.
+Default aspect mode requires Bazel 8+ and rules_python (tested: 1.6.3). It exports
+configured PyInfo imports/sources and downloads generated sources. It does not
+select a Python interpreter or enforce strict Bazel dependencies. Conflicting
+target environments require a narrower scope. venv_symlinks is unsupported.
+mode='scan' is limited compatibility scanning of already materialized paths.
+Project extraPaths/executionEnvironments overrides are reported, not edited.
+
+C/C++: experimental clangd compilation database import. Configure an upstream
+exporter separately. Entries must use arguments arrays. Removing old commands
+requires restarting clangd. Broad query-driver permissions are never enabled.
+
+Go: experimental rules_go package driver for gopls. Requires a POSIX shell.
+Package loading can execute further Bazel builds. User-owned drivers are kept.
+
+Rust: experimental rust-project.json import for rust-analyzer. Configure the
+rules_rust exporter appropriate to your ruleset; refresh is opt-in.
+
+Java/Scala/JS/TS/Kotlin do not yet have language-server adapters. Target actions
+remain language-independent.
+
+LIFECYCLE                                                   *bzl-lifecycle*
+
+Only workspace-confined clients receive settings; shared/rootless clients
+without ownership evidence are skipped. User paths/settings are retained and
+only previous plugin contributions are replaced. Partial/failed discovery does
+not replace working client settings.
+
+Metadata lives in stdpath('cache')/bzl/sync. Build inputs, configuration, scope,
+required outputs and exporter fingerprints are validated on LspAttach before
+reuse. No implicit build runs on attachment. Load the plugin before LspAttach
+for automatic restoration. BUILD writes invalidate the affected workspace;
+external edits/branch changes require explicit sync for already attached LSPs.
+
+Adapter registration API: require('bzl.sync').register(name, adapter). An
+adapter supplies detect(ctx), discover(ctx, done), apply(ctx, metadata, client),
+and a clients set keyed by LSP name. Enable it in sync.languages[name]. Use
+ctx.run(argv, callback) and ctx.cleanup(fn) to participate in cancellation.
+This API is experimental; see built-in adapters for the result schema.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

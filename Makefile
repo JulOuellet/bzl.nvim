@@ -1,4 +1,4 @@
-.PHONY: test fmt fmt-check deps
+.PHONY: test fmt fmt-check deps test-integration-python test-integration-go
 
 deps: deps/mini.nvim
 
@@ -13,3 +13,9 @@ fmt:
 
 fmt-check:
 	stylua --check .
+
+test-integration-python:
+	cd examples/multilang && nvim --headless -u NONE -i NONE -l "$(CURDIR)/tests/integration/python.lua"
+
+test-integration-go:
+	cd examples/multilang && nvim --headless -u NONE -i NONE -l "$(CURDIR)/tests/integration/go.lua"

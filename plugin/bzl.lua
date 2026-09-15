@@ -3,14 +3,48 @@ if vim.g.loaded_bzl then
 end
 vim.g.loaded_bzl = true
 
+local group = vim.api.nvim_create_augroup("bzl", {})
 vim.api.nvim_create_autocmd("BufWritePost", {
-	group = vim.api.nvim_create_augroup("bzl", {}),
-	pattern = { "BUILD", "BUILD.bazel", "*.bzl", "MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel" },
+	group = group,
+	pattern = {
+		"BUILD",
+		"BUILD.bazel",
+		"*.bzl",
+		"MODULE.bazel",
+		"MODULE.bazel.lock",
+		"WORKSPACE",
+		"WORKSPACE.bazel",
+		".bazelrc",
+		"*.bazelproject",
+		"pyproject.toml",
+		"pyrightconfig.json",
+	},
 	desc = "Drop the bzl.nvim target cache when build files change",
-	callback = function()
+	callback = function(event)
 		-- an unloaded plugin has no cache to drop; don't load it just for this
-		if package.loaded["bzl.targets"] then
-			require("bzl.targets").refresh()
+		if not package.loaded["bzl.targets"] and not package.loaded["bzl.sync"] then
+			return
+		end
+		local root = require("bzl.cli").workspace_root(event.buf)
+		if not root then
+			return
+		end
+		if package.loaded["bzl.sync"] then
+			require("bzl.sync").invalidate(root)
+		else
+			require("bzl.targets").refresh(root)
+		end
+	end,
+})
+
+vim.api.nvim_create_autocmd("LspAttach", {
+	group = group,
+	desc = "Restore validated Bazel language metadata",
+	callback = function(event)
+		local root = require("bzl.cli").workspace_root(event.buf)
+		local client = vim.lsp.get_client_by_id(event.data.client_id)
+		if root and client then
+			require("bzl.sync").attach(client, root)
 		end
 	end,
 })
@@ -33,6 +67,7 @@ end, {
 		if sub then
 			local args_for = {
 				targets = { "here", "runnable", "testable" },
+				sync = { "here" },
 			}
 			if not args_for[sub] then
 				return {}

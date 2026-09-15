@@ -28,7 +28,7 @@ minor versions.
 
 ## Requirements
 
-- Neovim >= 0.10
+- Neovim >= 0.11
 - bazel or bazelisk on your PATH (or set `bazel_cmd`)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) for the picker
 - [pyright](https://github.com/microsoft/pyright) or basedpyright, for
@@ -63,7 +63,9 @@ Calling `setup()` (or using `opts`) is optional; defaults apply otherwise.
 | Command | Description |
 | --- | --- |
 | `:Bzl targets [testable\|runnable] [here]` | Flat fuzzy picker over targets |
-| `:Bzl sync` | Re-query targets and refresh language server import paths |
+| `:Bzl sync [here\|target patterns…]` | Refresh targets and language metadata; may build generated sources |
+| `:Bzl cancel` | Cancel the current workspace's sync |
+| `:Bzl status` | Show the latest discovery and application results |
 
 Arguments can be combined in any order:
 
@@ -104,28 +106,66 @@ keys = {
 Browsing, running, testing, and building targets is language-agnostic:
 every target `bazel query` returns shows up in the picker, whatever
 language it builds. Language support below refers to `:Bzl sync`
-configuring the language server to resolve imports that bazel manages;
-Python is the only language wired up so far.
+configuring a language server from Bazel metadata. The plugin does not install
+or start language servers. Configure their roots to the Bazel workspace, then
+run `:Bzl sync`. This Neovim command is unrelated to Bazel's `bazel sync` command.
+
+| Language/server | Integration | Status |
+| --- | --- | --- |
+| Python / Pyright, basedpyright | Configured PyInfo aspect, generated sources, dependency import roots | End-to-end tests in the example |
+| C/C++ / clangd | Reads an exported `compile_commands.json`; optional exporter command | Experimental; exporter setup required |
+| Go / gopls | Builds rules_go's package driver and configures `gopls.env` | Experimental; real package-driver protocol tested |
+| Rust / rust-analyzer | Reads `rust-project.json`; optional rules_rust exporter command | Experimental; exporter tested, LSP acceptance pending |
+| Java, Scala, JS/TS, Kotlin | No language-server adapter yet | Picker/run/build/test only |
 
 ### Python
 
-`:Bzl sync` makes pyright resolve imports that bazel manages, mirroring what
-bazel itself puts on `sys.path` at run time:
+The default aspect integration requires **Bazel 8+ and rules_python** in the
+workspace's repository mapping. It injects the plugin's `bazel/` repository
+without editing your MODULE file. Tested with Bazel 8.7.0, rules_python 1.6.3,
+Pyright 1.1.411 and basedpyright 1.39.8 on x86_64 Linux.
 
-- pip packages installed by rules_python (discovered under bazel's external
-  repositories)
-- the workspace root (bazel's default import root)
-- first-party import roots declared through the `imports` attribute of
-  `py_*` rules
+Sync builds metadata and Python source output groups, downloading generated
+files as needed. It maps configured provider imports to actual source, wheel,
+and `bazel-out` locations. It updates `python.analysis.extraPaths` for Pyright
+and `basedpyright.analysis.extraPaths` for basedpyright. Existing user paths
+and unrelated settings are preserved; obsolete plugin paths are replaced.
 
-The discovered paths are pushed as `python.analysis.extraPaths` to the
-pyright/basedpyright clients attached to the workspace. Sync adds the paths
-bazel makes necessary and touches nothing else: all other LSP settings are
-preserved.
+Use `:Bzl sync //python:app` to select an environment or `:Bzl sync here` for the
+current project. A workspace-wide sync merges paths: it cannot represent
+conflicting dependency versions for the same file or enforce strict Bazel deps.
+Python interpreter/toolchain selection is not currently synchronized.
+`venv_symlinks` providers are explicitly reported as unsupported, not guessed.
 
-Supported setups: rules_python with the site-packages repository layout
-(bzlmod or WORKSPACE) and pyright or basedpyright. Other setups degrade
-gracefully; `:checkhealth bzl` reports what was found.
+`python.mode = "scan"` enables a limited compatibility mode for already
+materialized `site-packages` layouts. It is not target-accurate and does not
+reliably resolve generated files. `python.materialize = false` in aspect mode
+builds metadata only and reports missing sources without applying partial paths.
+
+Project-level `extraPaths` or `executionEnvironments` can override LSP settings;
+sync reports these conflicts instead of overwriting your configuration.
+
+### Lifecycle and safety
+
+Sync is explicit, scoped and cancellable. Identical requests coalesce; stale
+results cannot replace a newer scope. Each adapter reports its own status, so a
+missing exporter does not disable the picker or successful language adapters.
+Only clients confined to the selected workspace receive settings. A shared
+multi-workspace client is deliberately skipped.
+
+Metadata and the last selected scope are cached under Neovim's cache directory.
+On `LspAttach`, the plugin validates build inputs and required files before
+reapplying settings, without starting a build. Keep the plugin loaded before
+LSP attachment to enable restoration (with lazy.nvim, use `event = "BufReadPre"`
+instead of command-only loading if you want restoration before the first command).
+BUILD/config writes invalidate the affected workspace. Branch switches and
+external edits are detected during validation; run sync explicitly to refresh
+an already attached client. Imported bazelrc files, custom extension inputs and
+environment-dependent repository changes require `sync.inputs` or a fresh sync.
+
+Only use sync/exporters in trusted workspaces: Bazel repository rules, build
+actions and package drivers execute workspace code. The plugin never writes
+LSP configuration into your project automatically.
 
 ## Configuration
 
@@ -135,6 +175,22 @@ Defaults:
 require("bzl").setup({
 	-- Binary used for all bazel invocations, e.g. "bazelisk" or an absolute path.
 	bazel_cmd = "bazel",
+	startup_args = {}, -- Before the Bazel verb, e.g. --output_base=...
+	command_args = { query = {}, info = {}, build = {}, run = {}, test = {} },
+	sync = {
+		targets = { "//..." },
+		inputs = {}, -- Extra workspace-relative/absolute cache inputs
+		query_timeout = 120000, -- Milliseconds, applies to query/info
+		build_timeout = 0, -- No timeout; :Bzl cancel remains available
+		cache = true,
+		languages = {
+			python = { enabled = true, mode = "aspect", materialize = true },
+			cpp = { enabled = true, database = "compile_commands.json", refresh = {} },
+			go = { enabled = true, driver_target = "@rules_go//go/tools/gopackagesdriver" },
+			rust = { enabled = true, project = "rust-project.json", refresh = {} },
+		},
+	},
+	workspaces = {}, -- Absolute workspace-root keys with configuration overrides
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
 		preview = false,
@@ -148,20 +204,44 @@ require("bzl").setup({
 
 The preview remains available through `<A-p>` when `picker.preview` is false.
 
+For example, with rules_rust 0.65.0, set `rust.refresh` to
+`{ "run", "@rules_rust//tools/rust_analyzer:gen_rust_project", "--", "//rust/..." }`.
+For C++, configure an upstream exporter such as
+[Hedron](https://github.com/hedronvision/bazel-compile-commands-extractor), then
+set `cpp.refresh = { "run", "//:refresh_compile_commands" }`.
+These are Bazel argument lists, never shell strings. Exporters control their
+own scope and internal flags: configure those explicitly; `sync here` does not
+rewrite exporter arguments. Exporters may overwrite their generated project files.
+
+clangd databases must use `arguments` arrays. Removing entries previously sent
+to clangd requires a server restart. The plugin preserves explicit user compiler
+commands and does not enable broad `--query-driver` execution permissions.
+The Go launcher currently requires a POSIX shell and preserves startup and
+per-command flags; gopls package loading can trigger additional Bazel builds.
+
 ## Health
 
-`:checkhealth bzl` verifies the Neovim version, the bazel binary, and the
-snacks.nvim dependency.
+`:checkhealth bzl` verifies prerequisites and reports per-language discovery,
+client application counts and configuration conflicts. `ready` means metadata
+was discovered, not that a language server is installed or every feature works.
 
 ## Development
 
 With nix, `nix develop` provides bazel, stylua, and make. Otherwise, have
-Neovim >= 0.10, bazelisk, stylua, and make on your PATH.
+Neovim >= 0.11, bazelisk, stylua, and make on your PATH.
 
 - `make test` — run the test suite headless (clones mini.nvim into `deps/`
   on first run)
 - `make fmt` / `make fmt-check` — format / check lua sources
 - `tests/fixture/` — a small bazel workspace used as an integration-test bed
+
+For manual testing across Python, C++, Go, Rust, and Java, see the standalone
+[multilingual playground](examples/multilang/README.md). It includes passing
+tests, an intentional failure, and import-resolution checks before and after
+sync. Its toolchain downloads and tests are separate from `make test`.
+
+See [integration testing](tests/integration/README.md) for opt-in real-server
+checks and the [sync roadmap](docs/sync-plan.md) for remaining milestones.
 
 ## License
 

@@ -6,6 +6,7 @@ local M = {}
 
 ---@type table<string, bzl.Target[]> target list per workspace root
 local cache = {}
+local pending = {}
 
 ---Parse `bazel query --output=label_kind` output into targets.
 ---Pure function: raw stdout in, targets out. Lines that are not
@@ -122,31 +123,76 @@ end
 ---@param on_done fun(targets: bzl.Target[]|nil)
 ---@param opts { refresh: boolean }|nil
 function M.list(root, on_done, opts)
+	opts = opts or {}
 	local cli = require("bzl.cli")
-
-	if root and cache[root] and not (opts and opts.refresh) then
-		on_done(cache[root])
+	local config = opts.config or require("bzl.config").get(root)
+	local scope = opts.scope or { "//..." }
+	local key = vim.inspect({ root, config.bazel_cmd, config.startup_args, config.command_args.query, scope })
+	if cache[key] and not opts.refresh then
+		local entry = cache[key]
+		vim.schedule(function()
+			on_done(cache[key] == entry and entry.targets or nil)
+		end)
 		return
 	end
-
-	local started = cli.run(root, { "query", "//...", "--output=label_kind" }, function(result)
-		if result.code ~= 0 then
-			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
-			on_done(nil)
+	if pending[key] then
+		table.insert(pending[key].callbacks, on_done)
+		return
+	end
+	local request = { root = root, callbacks = { on_done } }
+	pending[key] = request
+	request.handle = cli.run(root, { "query", M.expression(scope), "--output=label_kind" }, function(result)
+		if pending[key] ~= request then
 			return
 		end
-		local targets = M.parse(result.stdout or "")
-		cache[root] = targets
-		on_done(targets)
-	end)
-	if not started then
-		on_done(nil)
-	end
+		pending[key] = nil
+		local targets
+		if result.code ~= 0 then
+			if result.status ~= "cancelled" then
+				vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
+			end
+		else
+			targets = M.parse(result.stdout or "")
+			cache[key] = { root = root, targets = targets }
+		end
+		for _, callback in ipairs(request.callbacks) do
+			callback(targets)
+		end
+	end, { config = config, timeout = config.sync.query_timeout })
+	return request.handle
+end
+
+function M.expression(scope)
+	return "set("
+		.. table.concat(
+			vim.tbl_map(function(label)
+				return string.format("%q", label)
+			end, scope),
+			" "
+		)
+		.. ")"
 end
 
 ---Drop all cached target lists (e.g. after BUILD file edits).
-function M.refresh()
-	cache = {}
+function M.refresh(root)
+	for key, entry in pairs(cache) do
+		if not root or entry.root == root then
+			cache[key] = nil
+		end
+	end
+	for key, request in pairs(pending) do
+		if not root or request.root == root then
+			pending[key] = nil
+			if request.handle and request.handle.cancel then
+				request.handle.cancel()
+			end
+			for _, callback in ipairs(request.callbacks) do
+				vim.schedule(function()
+					callback(nil)
+				end)
+			end
+		end
+	end
 end
 
 return M

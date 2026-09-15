@@ -1,0 +1,56 @@
+name: opt-in integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [pyright, basedpyright]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.11.6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: matrix.server == 'pyright'
+        run: npm install --prefix "$RUNNER_TEMP/bzl-lsp" pyright@1.1.411
+      - if: matrix.server == 'basedpyright'
+        run: python -m pip install basedpyright==1.39.8
+      - name: Exercise actual language-server behavior
+        env:
+          BZL_TEST_LSP_NAME: ${{ matrix.server }}
+        run: |
+          if [ "$BZL_TEST_LSP_NAME" = pyright ]; then
+            export BZL_TEST_LSP="$RUNNER_TEMP/bzl-lsp/node_modules/.bin/pyright-langserver"
+          else
+            export BZL_TEST_LSP=basedpyright-langserver
+          fi
+          make test-integration-python
+
+  bazel-and-go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.11.6
+      # Ubuntu runners provide Bazelisk; .bazelversion pins Bazel 8.7.0.
+      - run: bazel test //...
+        working-directory: examples/multilang
+      - run: make test-integration-go

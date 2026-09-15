@@ -28,7 +28,10 @@ T[":Bzl"]["is registered"] = function()
 end
 
 T[":Bzl"]["completes subcommands"] = function()
-	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]), { "sync", "targets" })
+	MiniTest.expect.equality(
+		child.lua_get([[vim.fn.getcompletion("Bzl ", "cmdline")]]),
+		{ "cancel", "status", "sync", "targets" }
+	)
 end
 
 T[":Bzl"]["completes picker arguments, minus the ones already used"] = function()
@@ -40,7 +43,7 @@ T[":Bzl"]["completes picker arguments, minus the ones already used"] = function(
 		child.lua_get([[vim.fn.getcompletion("Bzl targets testable ", "cmdline")]]),
 		{ "here", "runnable" }
 	)
-	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync ", "cmdline")]]), {})
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync ", "cmdline")]]), { "here" })
 end
 
 T[":Bzl"]["rejects an unknown picker argument"] = function()
@@ -69,7 +72,7 @@ T[":Bzl"]["prints usage without a subcommand"] = function()
 	MiniTest.expect.equality(notifications[1]:find("usage", 1, true) ~= nil, true)
 end
 
-T[":Bzl"]["sync reports progress, then the failure"] = function()
+T[":Bzl"]["sync reports a missing workspace"] = function()
 	child.lua([[
 		_G.notifications = {}
 		vim.notify = function(msg)
@@ -78,10 +81,9 @@ T[":Bzl"]["sync reports progress, then the failure"] = function()
 	]])
 	-- child cwd is the plugin root: not a bazel workspace, so sync must fail
 	child.cmd("Bzl sync")
-	child.lua([[vim.wait(5000, function() return #_G.notifications >= 2 end, 50)]])
+	child.lua([[vim.wait(5000, function() return #_G.notifications >= 1 end, 50)]])
 	local notifications = child.lua_get([[_G.notifications]])
-	MiniTest.expect.equality(notifications[1], "bzl.nvim: syncing targets...")
-	MiniTest.expect.equality(notifications[2]:find("no bazel workspace", 1, true) ~= nil, true)
+	MiniTest.expect.equality(notifications[1]:find("no bazel workspace", 1, true) ~= nil, true)
 end
 
 T[":Bzl"]["sync re-queries through real bazel"] = function()
@@ -99,31 +101,18 @@ T[":Bzl"]["sync re-queries through real bazel"] = function()
 	child.lua([[vim.wait(120000, function() return #_G.notifications >= 2 end, 100)]])
 	local notifications = child.lua_get([[_G.notifications]])
 	MiniTest.expect.equality(notifications[2]:find("synced 5 targets", 1, true) ~= nil, true)
-	-- the python step ran too: no pip deps in the fixture, but the
-	-- workspace root itself is always a search path
-	MiniTest.expect.equality(notifications[2]:find("1 python paths", 1, true) ~= nil, true)
+	MiniTest.expect.equality(notifications[2]:find("python:", 1, true), nil)
 end
 
-T[":Bzl"]["sync keeps its workspace when the current buffer changes"] = function()
-	child.cmd("edit tests/fixture/BUILD.bazel")
+T[":Bzl"]["sync captures the workspace and translates here"] = function()
+	child.cmd("edit tests/fixture/lib/BUILD.bazel")
 	child.lua([[
-		_G.sync_roots = {}
-		require("bzl.targets").list = function(root, on_done)
-			_G.sync_roots.targets = root
-			vim.cmd("enew")
-			on_done({})
-		end
-		package.loaded["bzl.python"] = {
-			sync = function(root, on_done)
-				_G.sync_roots.python = root
-				on_done({ paths = 0, clients = 0 })
-			end,
-		}
-		require("bzl").sync()
+		package.loaded["bzl.sync"] = { start = function(opts) _G.sync_options = opts end }
+		require("bzl").sync("here")
 	]])
-	local roots = child.lua_get([[_G.sync_roots]])
-	MiniTest.expect.equality(roots.python, roots.targets)
-	MiniTest.expect.equality(roots.targets:match("tests/fixture$"), "tests/fixture")
+	local options = child.lua_get([[_G.sync_options]])
+	MiniTest.expect.equality(options.root:match("tests/fixture$"), "tests/fixture")
+	MiniTest.expect.equality(options.targets, { "//lib/..." })
 end
 
 T[":Bzl"]["registers the build-file autocmds"] = function()
@@ -133,12 +122,17 @@ T[":Bzl"]["registers the build-file autocmds"] = function()
 	end, vim.api.nvim_get_autocmds({ group = "bzl", event = "BufWritePost" }))]])
 	table.sort(patterns)
 	MiniTest.expect.equality(patterns, {
+		"*.bazelproject",
 		"*.bzl",
+		".bazelrc",
 		"BUILD",
 		"BUILD.bazel",
 		"MODULE.bazel",
+		"MODULE.bazel.lock",
 		"WORKSPACE",
 		"WORKSPACE.bazel",
+		"pyproject.toml",
+		"pyrightconfig.json",
 	})
 end
 
