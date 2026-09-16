@@ -1,0 +1,19 @@
+module(name = "bzl_python_fixture")
+
+bazel_dep(name = "rules_python", version = "1.6.3")
+bazel_dep(name = "fixture_deps", version = "1.0")
+local_path_override(module_name = "fixture_deps", path = "deps")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    # Use host Python for wheel extraction, including on NixOS. The build's
+    # Python toolchain remains the hermetic 3.12 runtime above.
+    python_interpreter = "python3",
+    python_version = "3.12",
+    requirements_lock = "//:requirements.txt",
+)
+use_repo(pip, "pypi")

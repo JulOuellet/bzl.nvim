@@ -6,6 +6,8 @@ local M = {}
 
 ---@type table<string, bzl.Target[]> target list per workspace root
 local cache = {}
+local generation = 0
+local requests = {}
 
 ---Parse `bazel query --output=label_kind` output into targets.
 ---Pure function: raw stdout in, targets out. Lines that are not
@@ -129,6 +131,11 @@ function M.list(root, on_done, opts)
 		return
 	end
 
+	local current_generation = generation
+	local request = {}
+	if root then
+		requests[root] = request
+	end
 	local started = cli.run(root, { "query", "//...", "--output=label_kind" }, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
@@ -136,7 +143,14 @@ function M.list(root, on_done, opts)
 			return
 		end
 		local targets = M.parse(result.stdout or "")
-		cache[root] = targets
+		if generation ~= current_generation then
+			vim.notify("bzl.nvim: build files changed during target discovery; retry the command", vim.log.levels.WARN)
+			on_done(nil)
+			return
+		end
+		if requests[root] == request then
+			cache[root] = targets
+		end
 		on_done(targets)
 	end)
 	if not started then
@@ -146,6 +160,7 @@ end
 
 ---Drop all cached target lists (e.g. after BUILD file edits).
 function M.refresh()
+	generation = generation + 1
 	cache = {}
 end
 

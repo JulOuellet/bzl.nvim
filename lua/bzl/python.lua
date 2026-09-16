@@ -1,171 +1,155 @@
 local M = {}
 
----Client names that understand `python.analysis.extraPaths`.
-local PYTHON_CLIENTS = { pyright = true, basedpyright = true }
+local models, running, generations = {}, {}, {}
+local query_file = vim.fs.joinpath(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)), "../../bazel/python.cquery")
 
----Absolute paths of every `site-packages` directory one level under
----the given external repository root. Detects by content rather than
----repository naming, which varies across rules_python versions.
----@param external_dir string e.g. "<output_base>/external"
----@return string[] sorted site-packages paths
-function M.site_packages(external_dir)
-	local paths = {}
-	local handle = vim.uv.fs_scandir(external_dir)
-	if not handle then
-		return paths
+---Retain the last successful model, but never publish results from before an edit.
+function M.invalidate(root)
+	if root then
+		generations[root] = (generations[root] or 0) + 1
 	end
-	while true do
-		local name = vim.uv.fs_scandir_next(handle)
-		if not name then
-			break
-		end
-		local candidate = external_dir .. "/" .. name .. "/site-packages"
-		local stat = vim.uv.fs_stat(candidate)
-		if stat and stat.type == "directory" then
-			paths[#paths + 1] = candidate
-		end
-	end
-	table.sort(paths)
-	return paths
 end
 
----Whether a path is the root itself or lies inside it.
-local function inside(path, root)
-	return path == root or path:sub(1, #root + 1) == root .. "/"
-end
-
----Push extraPaths to python language servers via
----workspace/didChangeConfiguration; earlier paths are replaced, other
----settings are kept. Only clients rooted inside the given workspace are
----updated, so syncing one workspace never rewrites another's paths.
----The client list is injectable for testing and defaults to the
----attached pyright/basedpyright clients.
----@param paths string[]
----@param root string|nil workspace root; nil disables the root filter
----@param clients vim.lsp.Client[]|nil
----@return integer clients number of clients notified
-function M.push_extra_paths(paths, root, clients)
-	clients = clients
-		or vim.tbl_filter(function(client)
-			return PYTHON_CLIENTS[client.name] ~= nil
-		end, vim.lsp.get_clients())
-
-	local updated = 0
-	for _, client in ipairs(clients) do
-		-- clients without a root_dir (single-file mode) are included:
-		-- their workspace cannot be proven foreign
-		if not root or not client.root_dir or inside(client.root_dir, root) then
-			client.settings = vim.tbl_deep_extend("force", client.settings or {}, {
-				python = { analysis = { extraPaths = paths } },
-			})
-			client:notify("workspace/didChangeConfiguration", { settings = client.settings })
-			updated = updated + 1
-		end
-	end
-	return updated
-end
-
----Collapse "." and ".." segments of an absolute path. Pure function.
----@param path string
----@return string
-local function collapse(path)
-	local parts = {}
-	for part in path:gmatch("[^/]+") do
-		if part == ".." then
-			table.remove(parts)
-		elseif part ~= "." then
-			parts[#parts + 1] = part
-		end
-	end
-	return "/" .. table.concat(parts, "/")
-end
-
----Derive first-party import roots from the `imports` attributes of py
----rules in `bazel query --output=streamed_jsonproto` output: each entry
----adds a sys.path root relative to the rule's package. Pure function.
----@param output string one JSON object per line
----@param root string workspace root (absolute path)
----@return string[] sorted absolute roots, deduplicated
-function M.parse_import_roots(output, root)
-	local roots, seen = {}, {}
-	for line in output:gmatch("[^\r\n]+") do
-		local ok, target = pcall(vim.json.decode, line)
-		local rule = ok and type(target) == "table" and target.type == "RULE" and target.rule or nil
-		if rule then
-			local pkg = (rule.name or ""):match("^//([^:]*):")
-			for _, attr in ipairs(rule.attribute or {}) do
-				if attr.name == "imports" and attr.explicitlySpecified then
-					for _, entry in ipairs(attr.stringListValue or {}) do
-						local dir = collapse(root .. "/" .. (pkg or "") .. "/" .. entry)
-						if not seen[dir] then
-							seen[dir] = true
-							roots[#roots + 1] = dir
-						end
-					end
-				end
-			end
-		end
-	end
-	table.sort(roots)
-	return roots
-end
-
----Query the workspace for first-party import roots.
----@param on_done fun(roots: string[]|nil)
-local function import_roots(root, on_done)
-	local started = require("bzl.cli").run(root, {
-		"query",
-		'kind("py_.*", //...)',
-		"--output=streamed_jsonproto",
-	}, function(result)
-		if result.code ~= 0 then
-			vim.notify("bzl.nvim: bazel query for imports failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
-			on_done(nil)
+function M.attach(client)
+	local lsp = require("bzl.python.lsp")
+	for root, model in pairs(models) do
+		if lsp.apply(client, root, model) then
 			return
 		end
-		on_done(M.parse_import_roots(result.stdout or "", root))
-	end)
-	if not started then
-		on_done(nil)
 	end
 end
 
----Discover site-packages under the workspace's bazel external root plus
----first-party import roots, and push them to the attached python
----language servers. `on_done` is called exactly once; nil means the
----discovery failed.
----@param root string|nil workspace root
----@param on_done fun(result: { paths: integer, clients: integer }|nil)
-function M.sync(root, on_done)
+---Return the last successful model for health checks and integrations.
+function M.get(root)
+	return models[root] and vim.deepcopy(models[root]) or nil
+end
+
+---Analyze selected Python targets, build their outputs, then publish atomically.
+---@param root string|nil
+---@param on_done fun(result: table|nil)
+---@param targets bzl.Target[]|nil previously queried workspace targets
+function M.sync(root, on_done, targets)
 	local cli = require("bzl.cli")
-
-	local started = cli.run(root, { "info", "output_base" }, function(result)
-		if result.code ~= 0 then
-			vim.notify("bzl.nvim: bazel info failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
+	if not root then
+		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
+		on_done(nil)
+		return
+	end
+	if running[root] then
+		vim.notify("bzl.nvim: Python sync already running for " .. root, vim.log.levels.WARN)
+		on_done(nil)
+		return
+	end
+	running[root] = true
+	local config = vim.deepcopy(require("bzl.config").get())
+	local generation = generations[root] or 0
+	local finished = false
+	local function finish(model, err)
+		if finished then
+			return
+		end
+		finished = true
+		running[root] = nil
+		if generation ~= (generations[root] or 0) then
+			model, err = nil, "build files changed during sync; run :Bzl sync again"
+		end
+		local current = require("bzl.config").get()
+		for _, key in ipairs({ "bazel_cmd", "startup_flags", "build_flags", "python" }) do
+			if not vim.deep_equal(config[key], current[key]) then
+				model, err = nil, "Bazel configuration changed during sync; run :Bzl sync again"
+			end
+		end
+		if not model then
+			vim.notify("bzl.nvim: Python sync failed; previous LSP configuration kept.\n" .. err, vim.log.levels.ERROR)
 			on_done(nil)
 			return
 		end
-		local output_base = vim.trim(result.stdout or "")
-		local paths = M.site_packages(output_base .. "/external")
-		if not root then
-			local clients = M.push_extra_paths(paths, nil)
-			on_done({ paths = #paths, clients = clients })
+		models[root] = model
+		local clients = 0
+		for _, client in ipairs(vim.lsp.get_clients()) do
+			if require("bzl.python.lsp").apply(client, root, model) then
+				clients = clients + 1
+			end
+		end
+		on_done({ paths = #model.paths, clients = clients, targets = model.targets })
+	end
+	local function run(args, callback)
+		if generation ~= (generations[root] or 0) then
+			finish(nil, "build files changed during sync")
 			return
 		end
-		table.insert(paths, 1, root)
-		import_roots(root, function(roots)
-			-- push what we have even if the roots query failed
-			for _, dir in ipairs(roots or {}) do
-				if dir ~= root then
-					paths[#paths + 1] = dir
+		local started = cli.run(root, args, function(result)
+			if result.code ~= 0 then
+				finish(nil, "bazel " .. args[1] .. " failed:\n" .. (result.stderr or ""))
+			else
+				callback(result.stdout or "")
+			end
+		end, config)
+		if not started then
+			finish(nil, "could not start bazel " .. args[1])
+		end
+	end
+
+	local function analyze(labels)
+		if #labels == 0 then
+			finish({ paths = {}, targets = 0 })
+			return
+		end
+		for _, label in ipairs(labels) do
+			if type(label) ~= "string" or not label:match("^[@/]") or label:find("[%s\"'()]") then
+				finish(nil, "invalid Python target pattern: " .. tostring(label))
+				return
+			end
+		end
+		local expression = "config(set(" .. table.concat(labels, " ") .. "), target)"
+		run({ "cquery", expression, "--output=starlark", "--starlark:file=" .. query_file }, function(output)
+			local records, err = require("bzl.python.model").parse(output)
+			if not records or #records == 0 then
+				finish(nil, err or "selected targets do not expose PyInfo")
+				return
+			end
+			vim.notify(("bzl.nvim: building %d Python targets..."):format(#records), vim.log.levels.INFO)
+			local build = { "build", "--output_groups=+compilation_outputs", "--remote_download_outputs=all" }
+			for _, record in ipairs(records) do
+				build[#build + 1] = record.label
+			end
+			run(build, function()
+				run({ "info", "execution_root" }, function(info)
+					local execution_root = vim.trim(info)
+					if execution_root == "" or execution_root:sub(1, 1) ~= "/" then
+						finish(nil, "bazel info returned an invalid execution_root")
+						return
+					end
+					local model, resolve_err = require("bzl.python.model").resolve(records, root, execution_root)
+					finish(model, resolve_err)
+				end)
+			end)
+		end)
+	end
+
+	local configured = config.python.targets
+	if #configured > 0 then
+		analyze(configured)
+	else
+		local function from_targets(list)
+			if not list then
+				finish(nil, "target discovery failed")
+				return
+			end
+			local labels = {}
+			for _, target in ipairs(list) do
+				if target.kind:match("^py_") then
+					labels[#labels + 1] = target.label
 				end
 			end
-			local clients = M.push_extra_paths(paths, root)
-			on_done({ paths = #paths, clients = clients })
-		end)
-	end)
-	if not started then
-		on_done(nil)
+			table.sort(labels)
+			analyze(labels)
+		end
+		if targets then
+			from_targets(targets)
+		else
+			require("bzl.targets").list(root, from_targets, { refresh = true })
+		end
 	end
 end
 

@@ -1,4 +1,5 @@
 local M = {}
+local syncing = {}
 
 ---Optional. The plugin works with defaults if this is never called.
 ---@param opts table|nil
@@ -10,24 +11,35 @@ function M.targets(...)
 	require("bzl.picker").targets(...)
 end
 
----Force a fresh target query, like the sync button of the IntelliJ
----bazel plugin. Reports progress and the resulting target count.
+---Refresh targets and synchronize the configured Python project.
 function M.sync()
+	local root = require("bzl.cli").workspace_root()
+	if root and syncing[root] then
+		vim.notify("bzl.nvim: sync already running for " .. root, vim.log.levels.WARN)
+		return
+	end
+	if root then
+		syncing[root] = true
+	end
 	vim.notify("bzl.nvim: syncing targets...", vim.log.levels.INFO)
 	local start = vim.uv.hrtime()
-	local root = require("bzl.cli").workspace_root()
 	require("bzl.targets").list(root, function(targets)
 		if not targets then
+			if root then
+				syncing[root] = nil
+			end
 			return -- failure already notified
 		end
 		require("bzl.python").sync(root, function(python)
+			syncing[root] = nil
+			if not python then
+				return -- Python sync reports failures and retains the old model
+			end
 			local ms = math.floor((vim.uv.hrtime() - start) / 1e6)
 			local msg = ("bzl.nvim: synced %d targets in %d ms"):format(#targets, ms)
-			if python then
-				msg = msg .. (", %d python paths -> %d clients"):format(python.paths, python.clients)
-			end
+			msg = msg .. (", %d python paths -> %d clients"):format(python.paths, python.clients)
 			vim.notify(msg, vim.log.levels.INFO)
-		end)
+		end, targets)
 	end, { refresh = true })
 end
 

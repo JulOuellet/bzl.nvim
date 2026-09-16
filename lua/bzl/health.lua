@@ -25,6 +25,18 @@ function M.check()
 			"The target picker (:Bzl targets) requires folke/snacks.nvim",
 		})
 	end
+
+	vim.health.start("Python sync")
+	local root = require("bzl.cli").workspace_root()
+	local model = root and require("bzl.python").get(root)
+	if model then
+		vim.health.ok(("%d configured Python targets, %d import paths"):format(model.targets, #model.paths))
+		if model.interpreter then
+			vim.health.info("Bazel Python interpreter: " .. model.interpreter)
+		end
+	else
+		vim.health.info("No successful Python sync for this workspace yet; run :Bzl sync")
+	end
 end
 
 return M

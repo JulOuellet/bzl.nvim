@@ -148,4 +148,56 @@ T["project_of"]["falls back to the package without view files"] = function()
 	MiniTest.expect.equality(project_of(fixture_root .. "/lib/greet.sh", fixture_root), "lib")
 end
 
+T["cache"] = MiniTest.new_set()
+
+T["cache"]["an invalidated query cannot refill the cache"] = function()
+	local targets, cli = require("bzl.targets"), require("bzl.cli")
+	local original_run, original_notify = cli.run, vim.notify
+	local pending = {}
+	cli.run = function(_, _, done)
+		pending[#pending + 1] = done
+		return true
+	end
+	vim.notify = function() end
+	local ok, err = pcall(function()
+		targets.refresh()
+		local result = false
+		targets.list("/ws", function(value)
+			result = value
+		end)
+		targets.refresh()
+		pending[1]({ code = 0, stdout = "py_library rule //:old\n" })
+		MiniTest.expect.equality(result, nil)
+		targets.list("/ws", function() end)
+		MiniTest.expect.equality(#pending, 2)
+	end)
+	cli.run, vim.notify = original_run, original_notify
+	targets.refresh()
+	assert(ok, err)
+end
+
+T["cache"]["an older response cannot replace a newer refresh"] = function()
+	local targets, cli = require("bzl.targets"), require("bzl.cli")
+	local original_run = cli.run
+	local pending = {}
+	cli.run = function(_, _, done)
+		pending[#pending + 1] = done
+		return true
+	end
+	local ok, err = pcall(function()
+		targets.refresh()
+		targets.list("/ws", function() end)
+		targets.list("/ws", function() end, { refresh = true })
+		pending[2]({ code = 0, stdout = "py_library rule //:new\n" })
+		pending[1]({ code = 0, stdout = "py_library rule //:old\n" })
+		targets.list("/ws", function(result)
+			MiniTest.expect.equality(result[1].label, "//:new")
+		end)
+		MiniTest.expect.equality(#pending, 2)
+	end)
+	cli.run = original_run
+	targets.refresh()
+	assert(ok, err)
+end
+
 return T

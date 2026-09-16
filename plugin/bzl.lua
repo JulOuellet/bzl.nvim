@@ -3,14 +3,40 @@ if vim.g.loaded_bzl then
 end
 vim.g.loaded_bzl = true
 
+local group = vim.api.nvim_create_augroup("bzl", {})
 vim.api.nvim_create_autocmd("BufWritePost", {
-	group = vim.api.nvim_create_augroup("bzl", {}),
-	pattern = { "BUILD", "BUILD.bazel", "*.bzl", "MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel" },
+	group = group,
+	pattern = {
+		"BUILD",
+		"BUILD.bazel",
+		"*.bzl",
+		"MODULE.bazel",
+		"MODULE.bazel.lock",
+		"WORKSPACE",
+		"WORKSPACE.bazel",
+		".bazelrc",
+	},
 	desc = "Drop the bzl.nvim target cache when build files change",
-	callback = function()
+	callback = function(event)
 		-- an unloaded plugin has no cache to drop; don't load it just for this
 		if package.loaded["bzl.targets"] then
 			require("bzl.targets").refresh()
+		end
+		if package.loaded["bzl.python"] then
+			require("bzl.python").invalidate(require("bzl.cli").workspace_root(event.buf))
+		end
+	end,
+})
+
+vim.api.nvim_create_autocmd("LspAttach", {
+	group = group,
+	desc = "Apply the last successful Python sync to newly attached clients",
+	callback = function(event)
+		if package.loaded["bzl.python"] then
+			local client = vim.lsp.get_client_by_id(event.data.client_id)
+			if client then
+				require("bzl.python").attach(client)
+			end
 		end
 	end,
 })
