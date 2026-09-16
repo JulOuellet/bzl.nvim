@@ -24,11 +24,10 @@ function M.get(root)
 	return models[root] and vim.deepcopy(models[root]) or nil
 end
 
----Analyze selected Python targets, build their outputs, then publish atomically.
+---Refresh targets, analyze selected Python targets, build, then publish atomically.
 ---@param root string|nil
 ---@param on_done fun(result: table|nil)
----@param targets bzl.Target[]|nil previously queried workspace targets
-function M.sync(root, on_done, targets)
+function M.sync(root, on_done)
 	local cli = require("bzl.cli")
 	if not root then
 		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
@@ -44,6 +43,7 @@ function M.sync(root, on_done, targets)
 	local config = vim.deepcopy(require("bzl.config").get())
 	local generation = generations[root] or 0
 	local finished = false
+	local target_count = 0
 	local function finish(model, err)
 		if finished then
 			return
@@ -71,7 +71,7 @@ function M.sync(root, on_done, targets)
 				clients = clients + 1
 			end
 		end
-		on_done({ paths = #model.paths, clients = clients, targets = model.targets })
+		on_done({ paths = #model.paths, clients = clients, targets = target_count })
 	end
 	local function run(args, callback)
 		if generation ~= (generations[root] or 0) then
@@ -127,30 +127,23 @@ function M.sync(root, on_done, targets)
 		end)
 	end
 
-	local configured = config.python.targets
-	if #configured > 0 then
-		analyze(configured)
-	else
-		local function from_targets(list)
-			if not list then
-				finish(nil, "target discovery failed")
-				return
-			end
-			local labels = {}
-			for _, target in ipairs(list) do
+	require("bzl.targets").list(root, function(targets)
+		if not targets then
+			finish(nil, "target discovery failed")
+			return
+		end
+		target_count = #targets
+		local labels = vim.list_slice(config.python.targets)
+		if #labels == 0 then
+			for _, target in ipairs(targets) do
 				if target.kind:match("^py_") then
 					labels[#labels + 1] = target.label
 				end
 			end
 			table.sort(labels)
-			analyze(labels)
 		end
-		if targets then
-			from_targets(targets)
-		else
-			require("bzl.targets").list(root, from_targets, { refresh = true })
-		end
-	end
+		analyze(labels)
+	end, { refresh = true })
 end
 
 return M

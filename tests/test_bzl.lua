@@ -106,23 +106,15 @@ end
 T[":Bzl"]["sync keeps its workspace when the current buffer changes"] = function()
 	child.cmd("edit tests/fixture/BUILD.bazel")
 	child.lua([[
-		_G.sync_roots = {}
 		require("bzl.targets").list = function(root, on_done)
-			_G.sync_roots.targets = root
+			_G.sync_root = root
 			vim.cmd("enew")
 			on_done({})
 		end
-		package.loaded["bzl.python"] = {
-			sync = function(root, on_done)
-				_G.sync_roots.python = root
-				on_done({ paths = 0, clients = 0 })
-			end,
-		}
 		require("bzl").sync()
 	]])
-	local roots = child.lua_get([[_G.sync_roots]])
-	MiniTest.expect.equality(roots.python, roots.targets)
-	MiniTest.expect.equality(roots.targets:match("tests/fixture$"), "tests/fixture")
+	MiniTest.expect.equality(child.lua_get([[_G.sync_root:match("tests/fixture$")]]), "tests/fixture")
+	MiniTest.expect.equality(child.lua_get([[require("bzl.python").get(_G.sync_root)]]), { paths = {}, targets = 0 })
 end
 
 T[":Bzl"]["registers the build-file autocmds"] = function()

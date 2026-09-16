@@ -168,7 +168,9 @@ T["sync"] = MiniTest.new_set({
 			end
 			require("bzl.config").setup({ python = { targets = { "//:app" } } })
 			cli.run = function(_, args, done)
-				if args[1] == "cquery" then
+				if args[1] == "query" then
+					done({ code = 0, stdout = "py_binary rule //:app\nsh_test rule //:test\n" })
+				elseif args[1] == "cquery" then
 					done({
 						code = 0,
 						stdout = vim.json.encode({ label = "//:app", imports = {}, roots = {}, generated = {} }),
@@ -199,18 +201,37 @@ T["sync"]["builds before publishing and replays to clients that start later"] = 
 	python.sync(tmp, function(value)
 		result = value
 	end)
-	eq(commands, { "cquery", "build", "info" })
-	eq(result, { paths = 1, clients = 1, targets = 1 })
+	eq(commands, { "query", "cquery", "build", "info" })
+	eq(result, { paths = 1, clients = 1, targets = 2 })
 	local later = client("pyright", tmp)
 	python.attach(later)
 	eq(later.settings.python.analysis.extraPaths, { tmp })
+end
+
+T["sync"]["selects discovered Python rules unless targets are configured"] = function()
+	local run = cli.run
+	for _, labels in ipairs({ {}, { "//:selected" } }) do
+		require("bzl.config").setup({ python = { targets = labels } })
+		cli.run = function(root, args, done)
+			if args[1] == "cquery" then
+				eq(args[2], "config(set(" .. (labels[1] or "//:app") .. "), target)")
+			end
+			return run(root, args, done)
+		end
+		local calls = 0
+		python.sync(tmp, function(result)
+			eq(result.targets, 2)
+			calls = calls + 1
+		end)
+		eq(calls, 1)
+	end
 end
 
 T["sync"]["retains the last model and client settings on any stage failure"] = function()
 	python.sync(tmp, function() end)
 	local before = vim.deepcopy(c.settings)
 	local successful = cli.run
-	for _, stage in ipairs({ "cquery", "build", "info" }) do
+	for _, stage in ipairs({ "query", "cquery", "build", "info" }) do
 		cli.run = function(root, args, done)
 			if args[1] == stage then
 				done({ code = 1, stderr = "simulated failure" })
@@ -243,37 +264,48 @@ T["sync"]["completes exactly once when a command cannot start"] = function()
 end
 
 T["sync"]["rejects overlapping syncs and discards results invalidated by an edit"] = function()
-	local pending
-	cli.run = function(_, _, done)
-		pending = done
-		return true
+	local run = cli.run
+	for _, stage in ipairs({ "query", "cquery" }) do
+		local pending
+		cli.run = function(root, args, done)
+			if args[1] == stage then
+				pending = function()
+					run(root, args, done)
+				end
+				return true
+			end
+			return run(root, args, done)
+		end
+		local first, second = 0, 0
+		python.sync(tmp, function(value)
+			eq(value, nil)
+			first = first + 1
+		end)
+		python.sync(tmp, function(value)
+			eq(value, nil)
+			second = second + 1
+		end)
+		eq(second, 1)
+		python.invalidate(tmp)
+		pending()
+		eq(first, 1)
+		eq(python.get(tmp), nil)
+		eq(#c.notifications, 0)
 	end
-	local first, second = 0, 0
-	python.sync(tmp, function(value)
-		eq(value, nil)
-		first = first + 1
-	end)
-	python.sync(tmp, function(value)
-		eq(value, nil)
-		second = second + 1
-	end)
-	eq(second, 1)
-	python.invalidate(tmp)
-	pending({ code = 0, stdout = vim.json.encode({ label = "//:app", imports = {}, roots = {}, generated = {} }) })
-	eq(first, 1)
-	eq(python.get(tmp), nil)
-	eq(#c.notifications, 0)
 end
 
 T["sync"]["clears managed paths when there are no Python targets"] = function()
 	python.sync(tmp, function() end)
 	require("bzl.config").setup()
-	cli.run = function()
-		error("no Bazel analysis needed")
+	cli.run = function(_, args, done)
+		eq(args[1], "query")
+		done({ code = 0, stdout = "sh_test rule //:test\n" })
+		return true
 	end
 	python.sync(tmp, function(result)
 		eq(result.paths, 0)
-	end, {})
+		eq(result.targets, 1)
+	end)
 	eq(c.settings.basedpyright.analysis.extraPaths, {})
 end
 
@@ -282,8 +314,10 @@ T["sync"]["keeps one configuration throughout the commands and discards changed 
 	local commands = 0
 	cli.run = function(root, args, done, config)
 		commands = commands + 1
-		eq(config.build_flags, {})
-		if args[1] == "build" then
+		if args[1] ~= "query" then
+			eq(config.build_flags, {})
+		end
+		if args[1] == "query" then
 			require("bzl.config").setup({ python = { targets = { "//:app" } }, build_flags = { "--config=other" } })
 		end
 		return execute(root, args, done)
@@ -291,7 +325,7 @@ T["sync"]["keeps one configuration throughout the commands and discards changed 
 	python.sync(tmp, function(value)
 		eq(value, nil)
 	end)
-	eq(commands, 3)
+	eq(commands, 4)
 	eq(python.get(tmp), nil)
 	eq(#c.notifications, 0)
 end
