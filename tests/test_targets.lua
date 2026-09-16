@@ -200,4 +200,33 @@ T["cache"]["an older response cannot replace a newer refresh"] = function()
 	assert(ok, err)
 end
 
+T["cache"]["editing one workspace leaves another workspace's query valid"] = function()
+	local targets, cli = require("bzl.targets"), require("bzl.cli")
+	local original_run, original_notify = cli.run, vim.notify
+	local pending = {}
+	cli.run = function(root, _, done)
+		pending[root] = done
+		return true
+	end
+	vim.notify = function() end
+	local ok, err = pcall(function()
+		targets.refresh()
+		local first, second
+		targets.list("/first", function(result)
+			first = result or false
+		end)
+		targets.list("/second", function(result)
+			second = result or false
+		end)
+		targets.refresh("/first")
+		pending["/first"]({ code = 0, stdout = "go_library rule //:one\n" })
+		pending["/second"]({ code = 0, stdout = "go_library rule //:two\n" })
+		MiniTest.expect.equality(first, false)
+		MiniTest.expect.equality(second[1].label, "//:two")
+	end)
+	cli.run, vim.notify = original_run, original_notify
+	targets.refresh()
+	assert(ok, err)
+end
+
 return T

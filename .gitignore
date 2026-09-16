@@ -4,3 +4,5 @@ tests/fixture/bazel-*
 tests/fixture/MODULE.bazel.lock
 tests/python_fixture/bazel-*
 tests/python_fixture/MODULE.bazel.lock
+tests/go_fixture/bazel-*
+tests/go_fixture/MODULE.bazel.lock

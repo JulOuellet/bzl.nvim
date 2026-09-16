@@ -10,19 +10,29 @@ function M.targets(...)
 	require("bzl.picker").targets(...)
 end
 
----Refresh targets and synchronize the configured Python project.
+---Refresh targets and synchronize the workspace's supported languages.
 function M.sync()
 	local root = require("bzl.cli").workspace_root()
 	vim.notify("bzl.nvim: syncing targets...", vim.log.levels.INFO)
 	local start = vim.uv.hrtime()
-	require("bzl.python").sync(root, function(result)
+	require("bzl.sync").run(root, function(result)
 		if not result then
 			return -- sync reports failures and retains the old model
 		end
 		local ms = math.floor((vim.uv.hrtime() - start) / 1e6)
 		local msg = ("bzl.nvim: synced %d targets in %d ms"):format(result.targets, ms)
-		msg = msg .. (", %d python paths -> %d clients"):format(result.paths, result.clients)
-		vim.notify(msg, vim.log.levels.INFO)
+		local level = vim.log.levels.INFO
+		local names = vim.tbl_keys(result.languages)
+		table.sort(names)
+		for _, name in ipairs(names) do
+			local entry = result.languages[name]
+			if entry.model then
+				msg = msg .. (", %s: %s -> %d clients"):format(name, entry.model.summary, entry.clients)
+			else
+				msg, level = msg .. (", %s: failed (previous configuration kept)"):format(name), vim.log.levels.WARN
+			end
+		end
+		vim.notify(msg, level)
 	end)
 end
 

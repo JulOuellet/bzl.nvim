@@ -31,8 +31,8 @@ minor versions.
 - Neovim >= 0.10
 - bazel or bazelisk on your PATH (or set `bazel_cmd`)
 - [snacks.nvim](https://github.com/folke/snacks.nvim) for the picker
-- [pyright](https://github.com/microsoft/pyright) or basedpyright, for
-  Python language support
+- [pyright](https://github.com/microsoft/pyright) or basedpyright for Python;
+  Go and gopls for Go language support
 
 ## Installation
 
@@ -63,7 +63,7 @@ Calling `setup()` (or using `opts`) is optional; defaults apply otherwise.
 | Command | Description |
 | --- | --- |
 | `:Bzl targets [testable\|runnable] [here]` | Flat fuzzy picker over targets |
-| `:Bzl sync` | Refresh targets, build the selected Python project, and update its language servers |
+| `:Bzl sync` | Refresh targets and configure Python and Go language servers from Bazel |
 
 Arguments can be combined in any order:
 
@@ -104,8 +104,11 @@ keys = {
 Browsing, running, testing, and building targets is language-agnostic:
 every target `bazel query` returns shows up in the picker, whatever
 language it builds. Language support below refers to `:Bzl sync`
-configuring the language server to resolve imports that bazel manages;
-Python is the only language wired up so far.
+configuring language servers to resolve imports that Bazel manages. Sync detects
+Python and Go rules and prepares each language in turn. In a mixed workspace,
+one language's failure preserves its previous configuration while successful
+languages update. Disable a language with `python.enabled = false` or
+`go.enabled = false` to leave its servers alone on subsequent syncs.
 
 ### Python
 
@@ -157,6 +160,66 @@ are rejected. Existing `pyrightconfig.json` / `pyproject.toml` execution
 environments or import-path settings can take precedence over LSP settings;
 sync does not rewrite these files. It does not enforce Bazel strict dependencies.
 
+### Go
+
+`:Bzl sync` prepares the workspace's
+[rules_go package driver](https://github.com/bazel-contrib/rules_go/blob/master/docs/editors.md)
+and configures gopls through `gopls.env.GOPACKAGESDRIVER`. The driver supplies
+Bazel's package graph, including dependencies selected by build flags and
+generated Go sources. Packages are loaded and built as gopls requests them;
+sync first builds the driver and validates it by loading standard-library
+metadata. A successful sync means the driver is ready, while gopls can continue
+loading project packages in the background.
+
+Install Go and gopls and configure your gopls client to use the Bazel workspace
+root. For example, with Neovim 0.11+ and nvim-lspconfig:
+
+```lua
+local default_root_dir = vim.lsp.config.gopls.root_dir
+vim.lsp.config("gopls", {
+  root_dir = function(bufnr, on_dir)
+    local root = vim.fs.root(bufnr, { "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" })
+    if root then
+      on_dir(root)
+    else
+      default_root_dir(bufnr, on_dir)
+    end
+  end,
+})
+vim.lsp.enable("gopls")
+```
+
+For a Bzlmod workspace using `@rules_go`, plugin defaults work without additional
+configuration. Override the driver's label when your repository uses a different
+name, for example:
+
+```lua
+require("bzl").setup({
+  go = { driver_target = "@io_bazel_rules_go//go/tools/gopackagesdriver" },
+  build_flags = { "--config=dev" },
+})
+```
+
+The driver uses the plugin's `bazel_cmd`, `startup_flags`, and `build_flags`,
+including during subsequent gopls requests. Go package loading follows gopls'
+requests; `python.targets` only scopes Python. Sync also adds Bazel build-file
+patterns to `gopls.workspaceFiles` so edits trigger package reloads. Existing
+gopls settings and explicitly configured package drivers (including `off`) are
+preserved. Clear your explicit `GOPACKAGESDRIVER` to let the plugin manage it.
+
+Repeated syncs refresh an already-running gopls, and its configuration is
+reapplied when the server restarts. Launchers live in Neovim's temporary directory
+and last for the editor session. Sync does not create a `go.mod` or edit the
+workspace. A failed driver preparation retains the previous configuration;
+package-loading errors after configuration are reported by gopls.
+
+Go sync requires a POSIX shell and is tested with Bazel 8.7.0, rules_go 0.58.3,
+the Go 1.25.5 Bazel SDK, and gopls 0.22.0. The initial integration covers native
+Go libraries, binaries, and tests on Linux; cgo and cross-compilation are not
+validated. gopls' Bazel integration depends on rules_go's driver rather than
+gopls' native Go module support. Use an output base without spaces: the tested
+Gazelle dependency fails to build its tools when that path contains spaces.
+
 ## Configuration
 
 Defaults:
@@ -168,7 +231,12 @@ require("bzl").setup({
 	startup_flags = {}, -- before the Bazel subcommand, e.g. --output_base=...
 	build_flags = {}, -- used by build/run/test, cquery, and info
 	python = {
+		enabled = true,
 		targets = {}, -- empty selects all workspace py_* rules
+	},
+	go = {
+		enabled = true,
+		driver_target = "@rules_go//go/tools/gopackagesdriver",
 	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
@@ -186,22 +254,33 @@ The preview remains available through `<A-p>` when `picker.preview` is false.
 ## Health
 
 `:checkhealth bzl` verifies the Neovim version, the bazel binary, and the
-snacks.nvim dependency, and reports the last successful Python sync for the
+snacks.nvim dependency, and reports the last successful sync for each language in the
 current workspace.
 
 ## Development
 
-With nix, `nix develop` provides bazel, Python 3, stylua, and make. Otherwise,
-have Neovim >= 0.10, bazelisk, Python 3, stylua, and make on your PATH.
+With nix, `nix develop` provides Bazel, Python 3, Go, gopls, stylua, and make.
+Otherwise, have Neovim >= 0.10, bazelisk, Python 3, stylua, and make on your PATH.
 
 - `make test` — run the test suite headless (clones mini.nvim into `deps/`
   on first run)
 - `make fmt` / `make fmt-check` — format / check lua sources
 - `tests/fixture/` — a small bazel workspace used as an integration-test bed
 - `tests/python_fixture/` — configured Python imports, pip, and generated sources
+- `tests/go_fixture/` — Bazel-only Go imports, generated sources, and configuration changes
 - With `pyright-langserver` and `basedpyright-langserver` on PATH, `make test`
   also checks real LSP navigation to generated and external imports. Set
   `BZL_TEST_PYRIGHT` / `BZL_TEST_BASEDPYRIGHT` to use specific executables.
+- With Go and gopls on PATH, `make test` checks actual Go navigation, diagnostics,
+  repeated syncs, failure recovery, and server restarts. `BZL_TEST_GOPLS` selects
+  a specific server executable. CI installs all three language servers.
+
+Sync adapters are internal modules under `lua/bzl/languages/`, implementing
+`detect(context)`, `prepare(context, done)`, and `apply(client, root, model)`.
+The coordinator owns discovery, configuration snapshots, invalidation, and
+publication. Each adapter owns its model and server settings; a model supplies
+a `summary` for status and health output. Models are kept in memory per workspace
+and language and published only after preparation and configuration validation.
 
 ## License
 

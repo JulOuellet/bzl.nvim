@@ -7,9 +7,14 @@ M.defaults = {
 	startup_flags = {},
 	build_flags = {},
 	python = {
+		enabled = true,
 		-- Empty means all workspace py_* rules. Explicit labels/patterns also
 		-- support custom rules providing PyInfo.
 		targets = {},
+	},
+	go = {
+		enabled = true,
+		driver_target = "@rules_go//go/tools/gopackagesdriver",
 	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.

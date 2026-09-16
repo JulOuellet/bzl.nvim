@@ -7,6 +7,7 @@ local M = {}
 ---@type table<string, bzl.Target[]> target list per workspace root
 local cache = {}
 local generation = 0
+local root_generations = {}
 local requests = {}
 
 ---Parse `bazel query --output=label_kind` output into targets.
@@ -132,6 +133,7 @@ function M.list(root, on_done, opts)
 	end
 
 	local current_generation = generation
+	local root_generation = root_generations[root]
 	local request = {}
 	if root then
 		requests[root] = request
@@ -143,7 +145,7 @@ function M.list(root, on_done, opts)
 			return
 		end
 		local targets = M.parse(result.stdout or "")
-		if generation ~= current_generation then
+		if generation ~= current_generation or root_generation ~= root_generations[root] then
 			vim.notify("bzl.nvim: build files changed during target discovery; retry the command", vim.log.levels.WARN)
 			on_done(nil)
 			return
@@ -158,10 +160,15 @@ function M.list(root, on_done, opts)
 	end
 end
 
----Drop all cached target lists (e.g. after BUILD file edits).
-function M.refresh()
-	generation = generation + 1
-	cache = {}
+---Drop a workspace's target list, or all lists when no root is supplied.
+function M.refresh(root)
+	if root then
+		root_generations[root] = (root_generations[root] or 0) + 1
+		cache[root] = nil
+	else
+		generation = generation + 1
+		cache = {}
+	end
 end
 
 return M
