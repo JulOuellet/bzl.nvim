@@ -1,0 +1,62 @@
+"""Extract configured Python metadata without loading a particular rules_python version."""
+
+def _provider(values, name):
+    # Prefer rules_python's provider to the legacy builtin compatibility copy.
+    for key in sorted(values.keys()):
+        if key.endswith("%" + name):
+            return values[key]
+    return values.get(name)
+
+def format(target):
+    values = providers(target)
+    info = _provider(values, "PyInfo")
+    if info == None:
+        return ""
+
+    roots = {}
+    generated = {}
+    sources = []
+    for field in ["transitive_sources", "transitive_original_sources", "transitive_pyi_files"]:
+        for source in getattr(info, field, depset()).to_list():
+            sources.append(source)
+            if not source.is_source:
+                generated[source.path] = True
+
+    # Wheels containing only extension modules may contribute runfiles but no
+    # Python sources. Their repository roots are still needed for imports.
+    default = values.get("DefaultInfo")
+    if default and default.default_runfiles:
+        sources.extend(default.default_runfiles.files.to_list())
+    for source in sources:
+        short = source.short_path
+        repo = ""
+        if short.startswith("../"):
+            repo, _, short = short[3:].partition("/")
+        base = source.path[:-len(short)].rstrip("/")
+        roots[(repo, base)] = {"repo": repo, "path": base}
+
+    imports = {path: True for path in info.imports.to_list()}
+    for entry in getattr(info, "venv_symlinks", depset()).to_list():
+        if entry.kind == "LIB" and entry.link_to_path:
+            suffix = "/" + entry.venv_path
+            if not entry.link_to_path.endswith(suffix):
+                return json.encode({"error": "unsupported Python venv import remapping in " + str(target.label)})
+            imports[entry.link_to_path[:-len(suffix)]] = True
+
+    runtime = _provider(values, "PyRuntimeInfo")
+    interpreter = None
+    version = None
+    if runtime != None:
+        interpreter = runtime.interpreter.path if runtime.interpreter else runtime.interpreter_path
+        version_info = getattr(runtime, "interpreter_version_info", None)
+        if version_info and version_info.major and version_info.minor:
+            version = "{}.{}".format(version_info.major, version_info.minor)
+
+    return json.encode({
+        "label": str(target.label),
+        "imports": imports.keys(),
+        "roots": roots.values(),
+        "generated": sorted(generated.keys()),
+        "interpreter": interpreter,
+        "version": version,
+    })

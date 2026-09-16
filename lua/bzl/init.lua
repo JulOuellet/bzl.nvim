@@ -10,25 +10,20 @@ function M.targets(...)
 	require("bzl.picker").targets(...)
 end
 
----Force a fresh target query, like the sync button of the IntelliJ
----bazel plugin. Reports progress and the resulting target count.
+---Refresh targets and synchronize the configured Python project.
 function M.sync()
+	local root = require("bzl.cli").workspace_root()
 	vim.notify("bzl.nvim: syncing targets...", vim.log.levels.INFO)
 	local start = vim.uv.hrtime()
-	local root = require("bzl.cli").workspace_root()
-	require("bzl.targets").list(root, function(targets)
-		if not targets then
-			return -- failure already notified
+	require("bzl.python").sync(root, function(result)
+		if not result then
+			return -- sync reports failures and retains the old model
 		end
-		require("bzl.python").sync(root, function(python)
-			local ms = math.floor((vim.uv.hrtime() - start) / 1e6)
-			local msg = ("bzl.nvim: synced %d targets in %d ms"):format(#targets, ms)
-			if python then
-				msg = msg .. (", %d python paths -> %d clients"):format(python.paths, python.clients)
-			end
-			vim.notify(msg, vim.log.levels.INFO)
-		end)
-	end, { refresh = true })
+		local ms = math.floor((vim.uv.hrtime() - start) / 1e6)
+		local msg = ("bzl.nvim: synced %d targets in %d ms"):format(result.targets, ms)
+		msg = msg .. (", %d python paths -> %d clients"):format(result.paths, result.clients)
+		vim.notify(msg, vim.log.levels.INFO)
+	end)
 end
 
 M.subcommands = {

@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "normal",
+    srcs = ["normal/site-packages/external_lib/__init__.py"],
+    imports = ["normal/site-packages"],
+    visibility = ["//visibility:public"],
+)
+
+py_library(
+    name = "alternate",
+    srcs = ["alternate/site-packages/external_lib/__init__.py"],
+    imports = ["alternate/site-packages"],
+    visibility = ["//visibility:public"],
+)

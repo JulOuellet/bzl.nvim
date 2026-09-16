@@ -55,7 +55,7 @@ function M.execute(root, verb, label)
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_win_set_buf(win, buf)
 
-	local cmd = { require("bzl.config").get().bazel_cmd, verb, label }
+	local cmd = require("bzl.cli").command({ verb, label })
 	local started
 	local job
 	vim.api.nvim_win_call(win, function()

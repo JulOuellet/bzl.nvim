@@ -1,0 +1,34 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+config_setting(
+    name = "alternate",
+    values = {"define": "python_variant=alternate"},
+)
+
+genrule(
+    name = "generate",
+    outs = ["generated/message.py"],
+    cmd = "echo 'MESSAGE = \"generated\"' > $@",
+)
+
+py_library(
+    name = "generated",
+    srcs = [":generate"],
+    imports = ["generated"],
+)
+
+py_library(
+    name = "app_lib",
+    srcs = ["app.py"],
+    deps = [":generated", "@pypi//packaging"] + select({
+        ":alternate": ["@fixture_deps//:alternate"],
+        "//conditions:default": ["@fixture_deps//:normal"],
+    }),
+)
+
+py_binary(
+    name = "app",
+    srcs = ["main.py"],
+    main = "main.py",
+    deps = [":app_lib"],
+)

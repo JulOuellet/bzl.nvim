@@ -3,6 +3,14 @@ local M = {}
 M.defaults = {
 	-- Binary used for all bazel invocations, e.g. "bazelisk" or an absolute path.
 	bazel_cmd = "bazel",
+	-- Startup flags precede the verb; build flags also apply to sync analysis.
+	startup_flags = {},
+	build_flags = {},
+	python = {
+		-- Empty means all workspace py_* rules. Explicit labels/patterns also
+		-- support custom rules providing PyInfo.
+		targets = {},
+	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
 		preview = false,

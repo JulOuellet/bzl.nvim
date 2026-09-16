@@ -63,7 +63,7 @@ Calling `setup()` (or using `opts`) is optional; defaults apply otherwise.
 | Command | Description |
 | --- | --- |
 | `:Bzl targets [testable\|runnable] [here]` | Flat fuzzy picker over targets |
-| `:Bzl sync` | Re-query targets and refresh language server import paths |
+| `:Bzl sync` | Refresh targets, build the selected Python project, and update its language servers |
 
 Arguments can be combined in any order:
 
@@ -109,23 +109,53 @@ Python is the only language wired up so far.
 
 ### Python
 
-`:Bzl sync` makes pyright resolve imports that bazel manages, mirroring what
-bazel itself puts on `sys.path` at run time:
+`:Bzl sync` queries the selected targets' configured `PyInfo` providers,
+builds their default and `compilation_outputs` output groups, and then updates
+Pyright/Basedpyright. It resolves `select()` with your build flags and obtains
+transitive import roots from Bazel, including pip dependencies and generated
+Python sources. A fresh checkout does not need a separate build first.
+Sync can download dependencies and execute build actions; it does not run tests.
 
-- pip packages installed by rules_python (discovered under bazel's external
-  repositories)
-- the workspace root (bazel's default import root)
-- first-party import roots declared through the `imports` attribute of
-  `py_*` rules
+By default, sync selects the workspace's `py_*` rules. For a monorepo, select
+the binaries, tests, or libraries you are working on:
 
-The discovered paths are pushed as `python.analysis.extraPaths` to the
-pyright/basedpyright clients attached to the workspace. Sync adds the paths
-bazel makes necessary and touches nothing else: all other LSP settings are
-preserved.
+```lua
+require("bzl").setup({
+	python = { targets = { "//services/api:server" } },
+	build_flags = { "--config=dev" }, -- must exist in your .bazelrc
+})
+```
 
-Supported setups: rules_python with the site-packages repository layout
-(bzlmod or WORKSPACE) and pyright or basedpyright. Other setups degrade
-gracefully; `:checkhealth bzl` reports what was found.
+Target patterns such as `//services/api/...` are accepted. Explicit selections
+also support custom rules exposing `PyInfo`; generated sources must be included
+in their default or `compilation_outputs` output groups. `.bazelproject` contents
+are not interpreted. Startup and build flags also apply to picker builds,
+runs, and tests, so those use the same configuration as sync.
+
+Discovered paths are sent as `python.analysis.extraPaths` to Pyright and
+`basedpyright.analysis.extraPaths` to Basedpyright. Existing user paths and
+unrelated settings are preserved; subsequent syncs remove obsolete paths added
+by the plugin. When a selected binary or test exposes a Python runtime, sync
+also sets `python.pythonPath` unless you have configured an interpreter yourself.
+Selecting libraries alone may not expose runtime information.
+
+The last successful result is kept in memory and applied when a Python server
+attaches or restarts. Failed discovery/builds and edits made during sync leave
+the previous LSP configuration in place. Run sync again after changing BUILD
+files, dependencies, target selection, or flags. Clients shared with another
+Bazel workspace are not updated. `:checkhealth bzl` reports the saved model.
+
+Python sync requires Bazel 8+ and is tested with rules_python 1.6.3, Pyright, and
+Basedpyright. Native providers and other rules_python versions are recognized
+through provider names rather than repository naming conventions. Unsupported
+metadata or missing generated files cause an explicit sync failure.
+
+The language server sees the union of the selected targets' import paths, not
+Bazel's per-target dependency visibility. Select a single target when projects
+need conflicting package versions; selections with conflicting Python runtimes
+are rejected. Existing `pyrightconfig.json` / `pyproject.toml` execution
+environments or import-path settings can take precedence over LSP settings;
+sync does not rewrite these files. It does not enforce Bazel strict dependencies.
 
 ## Configuration
 
@@ -135,6 +165,11 @@ Defaults:
 require("bzl").setup({
 	-- Binary used for all bazel invocations, e.g. "bazelisk" or an absolute path.
 	bazel_cmd = "bazel",
+	startup_flags = {}, -- before the Bazel subcommand, e.g. --output_base=...
+	build_flags = {}, -- used by build/run/test, cquery, and info
+	python = {
+		targets = {}, -- empty selects all workspace py_* rules
+	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
 		preview = false,
@@ -151,17 +186,22 @@ The preview remains available through `<A-p>` when `picker.preview` is false.
 ## Health
 
 `:checkhealth bzl` verifies the Neovim version, the bazel binary, and the
-snacks.nvim dependency.
+snacks.nvim dependency, and reports the last successful Python sync for the
+current workspace.
 
 ## Development
 
-With nix, `nix develop` provides bazel, stylua, and make. Otherwise, have
-Neovim >= 0.10, bazelisk, stylua, and make on your PATH.
+With nix, `nix develop` provides bazel, Python 3, stylua, and make. Otherwise,
+have Neovim >= 0.10, bazelisk, Python 3, stylua, and make on your PATH.
 
 - `make test` — run the test suite headless (clones mini.nvim into `deps/`
   on first run)
 - `make fmt` / `make fmt-check` — format / check lua sources
 - `tests/fixture/` — a small bazel workspace used as an integration-test bed
+- `tests/python_fixture/` — configured Python imports, pip, and generated sources
+- With `pyright-langserver` and `basedpyright-langserver` on PATH, `make test`
+  also checks real LSP navigation to generated and external imports. Set
+  `BZL_TEST_PYRIGHT` / `BZL_TEST_BASEDPYRIGHT` to use specific executables.
 
 ## License
 

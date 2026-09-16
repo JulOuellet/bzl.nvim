@@ -20,6 +20,7 @@
             # bazel from nixpkgs rather than via bazelisk: bazelisk downloads
             # generic linux binaries, which cannot run on NixOS
             pkgs.bazel_8
+            pkgs.python3
             pkgs.stylua
             pkgs.gnumake
           ];
