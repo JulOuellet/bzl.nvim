@@ -4,7 +4,7 @@ local go = require("bzl.languages.go")
 local driver = require("bzl.go.driver")
 
 local function client(settings)
-	return {
+	local c = {
 		name = "gopls",
 		root_dir = "/ws",
 		settings = settings or {},
@@ -13,6 +13,13 @@ local function client(settings)
 			table.insert(self.notifications, { method, params })
 		end,
 	}
+	if vim.fn.has("nvim-0.11") == 0 then
+		local notify = c.notify
+		c.notify = function(...)
+			return notify(c, ...)
+		end
+	end
+	return c
 end
 
 T["preserves user settings and replaces only owned Go configuration"] = function()
@@ -53,6 +60,20 @@ T["respects explicit drivers and user changes to managed drivers"] = function()
 	local inherited = client()
 	inherited.config = { cmd_env = { GOPACKAGESDRIVER = "/inherited" } }
 	eq(go.apply(inherited, "/ws", { driver = "/ours" }), false)
+end
+
+T["clearing the last managed environment entry sends an object once"] = function()
+	local c = client()
+	go.apply(c, "/ws", { driver = "/ours" })
+	go.apply(c, "/ws", {})
+	eq(vim.json.encode(c.settings.gopls.env), "{}")
+	eq(c.settings.gopls.workspaceFiles, {})
+	go.apply(c, "/ws", {})
+	eq(#c.notifications, 2)
+	local later = client()
+	go.apply(later, "/ws", {})
+	eq(#later.notifications, 0)
+	eq(later.settings, {})
 end
 
 T["excludes foreign and shared clients"] = function()

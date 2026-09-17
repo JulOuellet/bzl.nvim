@@ -189,13 +189,13 @@ vim.lsp.config("gopls", {
 vim.lsp.enable("gopls")
 ```
 
-For a Bzlmod workspace using `@rules_go`, plugin defaults work without additional
-configuration. Override the driver's label when your repository uses a different
-name, for example:
+Sync probes `@rules_go` and `@io_bazel_rules_go` to find the driver, supporting
+both common Bzlmod and WORKSPACE repository names. Override the driver's label
+when your repository uses a different name, for example:
 
 ```lua
 require("bzl").setup({
-  go = { driver_target = "@io_bazel_rules_go//go/tools/gopackagesdriver" },
+  go = { driver_target = "@my_rules_go//go/tools/gopackagesdriver" },
   build_flags = { "--config=dev" },
 })
 ```
@@ -208,7 +208,9 @@ gopls settings and explicitly configured package drivers (including `off`) are
 preserved. Clear your explicit `GOPACKAGESDRIVER` to let the plugin manage it.
 
 Repeated syncs refresh an already-running gopls, and its configuration is
-reapplied when the server restarts. Launchers live in Neovim's temporary directory
+reapplied when the server restarts. Sync can also prepare the driver before gopls
+starts, including clients using a custom executable outside PATH. Set `go = false`
+if you do not use Go language support. Launchers live in Neovim's temporary directory
 and last for the editor session. Sync does not create a `go.mod` or edit the
 workspace. A failed driver preparation retains the previous configuration;
 package-loading errors after configuration are reported by gopls.
@@ -236,7 +238,7 @@ require("bzl").setup({
 	},
 	go = {
 		enabled = true,
-		driver_target = "@rules_go//go/tools/gopackagesdriver",
+		driver_target = nil, -- auto-detect @rules_go or @io_bazel_rules_go
 	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.

@@ -44,7 +44,7 @@ function M.apply(client, root, model)
 	managed[client] = next_managed
 	if not vim.deep_equal(settings, client.settings) then
 		client.settings = settings
-		client:notify("workspace/didChangeConfiguration", { settings = settings })
+		require("bzl.lsp").notify(client, "workspace/didChangeConfiguration", { settings = settings })
 	end
 	return true
 end

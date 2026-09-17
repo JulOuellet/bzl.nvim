@@ -1,5 +1,13 @@
 local M = {}
 
+---Neovim 0.10 has bound client functions; 0.11+ uses methods.
+function M.notify(client, method, params)
+	if vim.fn.has("nvim-0.11") == 1 then
+		return client:notify(method, params)
+	end
+	return client.notify(method, params)
+end
+
 local function normalize(path)
 	return vim.fs.normalize(vim.uv.fs_realpath(path) or path)
 end

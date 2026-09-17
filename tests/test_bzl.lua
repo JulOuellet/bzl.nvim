@@ -21,6 +21,24 @@ T["config"]["setup() overrides defaults"] = function()
 	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().bazel_cmd]]), "bazelisk")
 end
 
+T["config"]["normalizes language switches and rejects malformed options before replacing config"] = function()
+	child.lua([[require("bzl").setup({ go = false, python = true })]])
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().go.enabled]]), false)
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().python.targets]]), {})
+	MiniTest.expect.error(function()
+		child.lua([[require("bzl").setup({ go = "no" })]])
+	end, "go must be a table or boolean")
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().go.enabled]]), false)
+	-- Health must also accept shorthand switches.
+	child.cmd("checkhealth bzl")
+	MiniTest.expect.equality(
+		child.lua_get(
+			[[table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("Disabled", 1, true) ~= nil]]
+		),
+		true
+	)
+end
+
 T[":Bzl"] = MiniTest.new_set()
 
 T[":Bzl"]["is registered"] = function()
@@ -138,6 +156,14 @@ T[":Bzl"]["registers the build-file autocmds"] = function()
 		"WORKSPACE",
 		"WORKSPACE.bazel",
 	})
+end
+
+T[":Bzl"]["build-file writes keep unused modules unloaded"] = function()
+	child.cmd("edit tests/go_fixture/deps/BUILD.bazel")
+	child.lua([[vim.api.nvim_exec_autocmds("BufWritePost", { buffer = 0 })]])
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.cli"] ~= nil]]), false)
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.targets"] ~= nil]]), false)
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.sync"] ~= nil]]), false)
 end
 
 T[":Bzl"]["reports unknown subcommand"] = function()

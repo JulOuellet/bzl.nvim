@@ -3,6 +3,13 @@ local eq = MiniTest.expect.equality
 local root = vim.fn.getcwd() .. "/tests/go_fixture"
 local sync = require("bzl.sync")
 
+local function request(client, ...)
+	if vim.fn.has("nvim-0.11") == 1 then
+		return client:request_sync(...)
+	end
+	return client.request_sync(...)
+end
+
 T["gopls refreshes Bazel imports, generated sources and build flags"] = function()
 	local command = vim.env.BZL_TEST_GOPLS or vim.fn.exepath("gopls")
 	if
@@ -45,7 +52,7 @@ T["gopls refreshes Bazel imports, generated sources and build flags"] = function
 		return sync.get(root, "go")
 	end
 	local function definition(client, character, suffix)
-		local response = client:request_sync("textDocument/definition", {
+		local response = request(client, "textDocument/definition", {
 			textDocument = { uri = vim.uri_from_fname(root .. "/app.go") },
 			position = { line = 9, character = character },
 		}, 60000, 0)
@@ -93,9 +100,9 @@ T["gopls refreshes Bazel imports, generated sources and build flags"] = function
 		eq(client.settings, before)
 		require("bzl.config").setup({ build_flags = { "--define=go_variant=alternate" } })
 
-		client:stop(true)
+		vim.lsp.stop_client(id, true)
 		assert(vim.wait(5000, function()
-			return client:is_stopped()
+			return vim.lsp.get_client_by_id(id) == nil
 		end, 50))
 		client = start()
 		assert(
@@ -126,7 +133,7 @@ T["gopls refreshes Bazel imports, generated sources and build flags"] = function
 	if id then
 		local client = vim.lsp.get_client_by_id(id)
 		if client then
-			client:stop(true)
+			vim.lsp.stop_client(id, true)
 		end
 	end
 	vim.cmd("enew!")

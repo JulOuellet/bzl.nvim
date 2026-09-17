@@ -4,7 +4,7 @@ local lsp = require("bzl.python.lsp")
 local eq = MiniTest.expect.equality
 
 local function client(name, root, settings)
-	return {
+	local c = {
 		name = name or "pyright",
 		root_dir = root or "/ws",
 		settings = settings or {},
@@ -13,6 +13,13 @@ local function client(name, root, settings)
 			table.insert(self.notifications, { method = method, params = params })
 		end,
 	}
+	if vim.fn.has("nvim-0.11") == 0 then
+		local notify = c.notify
+		c.notify = function(...)
+			return notify(c, ...)
+		end
+	end
+	return c
 end
 
 T["lsp"] = MiniTest.new_set()

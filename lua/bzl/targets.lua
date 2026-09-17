@@ -133,11 +133,12 @@ function M.list(root, on_done, opts)
 	end
 
 	local current_generation = generation
-	local root_generation = root_generations[root]
 	local request = {}
 	if root then
 		requests[root] = request
+		root_generations[root] = root_generations[root] or 0
 	end
+	local root_generation = root_generations[root]
 	local started = cli.run(root, { "query", "//...", "--output=label_kind" }, function(result)
 		if result.code ~= 0 then
 			vim.notify("bzl.nvim: bazel query failed:\n" .. (result.stderr or ""), vim.log.levels.ERROR)
@@ -160,11 +161,16 @@ function M.list(root, on_done, opts)
 	end
 end
 
----Drop a workspace's target list, or all lists when no root is supplied.
+---Drop a workspace and its known ancestors (which may use local module overrides),
+---or all lists when no root is supplied.
 function M.refresh(root)
 	if root then
-		root_generations[root] = (root_generations[root] or 0) + 1
-		cache[root] = nil
+		for known in pairs(root_generations) do
+			if root == known or vim.startswith(root, known == "/" and "/" or known .. "/") then
+				root_generations[known] = root_generations[known] + 1
+				cache[known] = nil
+			end
+		end
 	else
 		generation = generation + 1
 		cache = {}

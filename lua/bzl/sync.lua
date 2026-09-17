@@ -4,7 +4,11 @@ local models, running, generations = {}, {}, {}
 
 function M.invalidate(root)
 	if root then
-		generations[root] = (generations[root] or 0) + 1
+		for known in pairs(generations) do
+			if root == known or vim.startswith(root, known == "/" and "/" or known .. "/") then
+				generations[known] = generations[known] + 1
+			end
+		end
 	end
 end
 
@@ -13,11 +17,23 @@ function M.get(root, language)
 	return model and vim.deepcopy(model) or nil
 end
 
+local function apply(name, client, root, model)
+	local ok, applied, note = pcall(function()
+		return require("bzl.languages." .. name).apply(client, root, model)
+	end)
+	if not ok then
+		vim.notify("bzl.nvim: could not apply " .. name .. " settings: " .. tostring(applied), vim.log.levels.ERROR)
+	elseif note then
+		vim.notify("bzl.nvim: " .. note, vim.log.levels.WARN)
+	end
+	return ok and applied
+end
+
 function M.attach(client)
 	for root, saved in pairs(models) do
 		for name, model in pairs(saved) do
 			if require("bzl.config").get()[name].enabled then
-				require("bzl.languages." .. name).apply(client, root, model)
+				apply(name, client, root, model)
 			end
 		end
 	end
@@ -26,6 +42,8 @@ end
 ---One refresh per workspace. Adapters own their metadata and LSP settings.
 ---prepare(ctx, done) returns a model (with a summary) or nil, error.
 ---ctx.run runs Bazel with the captured configuration and reports errors for the adapter.
+---Its optional on_error callback allows probing labels without failing the adapter.
+---ctx.wrap guards callbacks from other asynchronous operations.
 function M.run(root, on_done)
 	if not root then
 		vim.notify("bzl.nvim: no bazel workspace found", vim.log.levels.ERROR)
@@ -37,9 +55,10 @@ function M.run(root, on_done)
 		on_done(nil)
 		return
 	end
-	running[root] = true
 	local config = vim.deepcopy(require("bzl.config").get())
-	local generation = generations[root] or 0
+	running[root] = true
+	generations[root] = generations[root] or 0
+	local generation = generations[root]
 	local result = { targets = 0, languages = {} }
 	local finished = false
 	local function stale()
@@ -71,11 +90,8 @@ function M.run(root, on_done)
 				models[root][name] = entry.model
 				entry.clients = 0
 				for _, client in ipairs(vim.lsp.get_clients()) do
-					local applied, note = require("bzl.languages." .. name).apply(client, root, entry.model)
-					if applied then
+					if apply(name, client, root, entry.model) then
 						entry.clients = entry.clients + 1
-					elseif note then
-						vim.notify("bzl.nvim: " .. note, vim.log.levels.WARN)
 					end
 				end
 			elseif entry then
@@ -101,9 +117,8 @@ function M.run(root, on_done)
 				return
 			end
 			local name = languages[index]
-			local adapter = require("bzl.languages." .. name)
 			local ctx = { root = root, config = config, targets = targets }
-			if not config[name].enabled or not (adapter.detect(ctx) or (models[root] and models[root][name])) then
+			if not config[name].enabled then
 				next_adapter(index + 1)
 				return
 			end
@@ -113,30 +128,60 @@ function M.run(root, on_done)
 					return
 				end
 				completed = true
-				result.languages[name] = { model = model, error = failure }
+				result.languages[name] =
+					{ model = model, error = not model and tostring(failure or "adapter returned no model") or nil }
 				next_adapter(index + 1)
 			end
-			function ctx.run(args, callback)
+			function ctx.wrap(callback)
+				return function(...)
+					if completed then
+						return
+					end
+					local ok, failure = pcall(callback, ...)
+					if not ok then
+						if completed then
+							error(failure) -- Errors after done() belong to the caller, not this adapter.
+						end
+						done(nil, failure)
+					end
+				end
+			end
+			function ctx.run(args, callback, on_error)
 				local changed = stale()
 				if changed then
 					done(nil, changed)
 					return
 				end
-				local started = require("bzl.cli").run(root, args, function(output)
-					if completed then
-						return
-					end
-					if output.code ~= 0 then
-						done(nil, "bazel " .. args[1] .. " failed:\n" .. (output.stderr or ""))
-					else
-						callback(output.stdout or "")
-					end
-				end, config)
+				local started = require("bzl.cli").run(
+					root,
+					args,
+					ctx.wrap(function(output)
+						if output.code ~= 0 then
+							local failure = "bazel " .. args[1] .. " failed:\n" .. (output.stderr or "")
+							if on_error then
+								on_error(failure)
+							else
+								done(nil, failure)
+							end
+						else
+							callback(output.stdout or "")
+						end
+					end),
+					config
+				)
 				if not started then
 					done(nil, "could not start bazel " .. args[1])
 				end
 			end
-			adapter.prepare(ctx, done)
+			ctx.wrap(function()
+				local adapter = require("bzl.languages." .. name)
+				if adapter.detect(ctx) or (models[root] and models[root][name]) then
+					adapter.prepare(ctx, done)
+				else
+					completed = true
+					next_adapter(index + 1)
+				end
+			end)()
 		end
 		next_adapter(1)
 	end, { refresh = true })

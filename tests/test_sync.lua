@@ -1,7 +1,7 @@
 local T = MiniTest.new_set()
 local eq = MiniTest.expect.equality
 local function client(name, root)
-	return {
+	local c = {
 		name = name,
 		root_dir = root,
 		settings = {},
@@ -10,6 +10,13 @@ local function client(name, root)
 			table.insert(self.notifications, { method = method, params = params })
 		end,
 	}
+	if vim.fn.has("nvim-0.11") == 0 then
+		local notify = c.notify
+		c.notify = function(...)
+			return notify(c, ...)
+		end
+	end
+	return c
 end
 
 local cli, sync, original_sync, original_run, original_clients, original_notify, tmp, c, notifications
@@ -216,14 +223,14 @@ T["sync"]["a failed language retains its model while the other language updates"
 		end
 		sync.run(tmp, function() end)
 		local before = vim.deepcopy(c.settings)
-		py.prepare = function(_, done)
-			done(nil, "Python failed")
+		py.prepare = function()
+			error("Python failed")
 		end
 		go.prepare = function(_, done)
 			done({ driver = "/second", summary = "ready" })
 		end
 		sync.run(tmp, function(result)
-			eq(result.languages.python.error, "Python failed")
+			eq(result.languages.python.error:find("Python failed", 1, true) ~= nil, true)
 			eq(result.languages.go.clients, 1)
 		end)
 		eq(c.settings, before)
@@ -246,7 +253,7 @@ end
 
 T["sync"]["disabled adapters neither build nor reapply saved settings"] = function()
 	sync.run(tmp, function() end)
-	require("bzl.config").setup({ python = { enabled = false }, go = { enabled = false } })
+	require("bzl.config").setup({ python = false, go = false })
 	cli.run = function(_, args, done)
 		eq(args[1], "query")
 		done({ code = 0, stdout = "py_binary rule //:app\ngo_library rule //:go\n" })
@@ -258,6 +265,110 @@ T["sync"]["disabled adapters neither build nor reapply saved settings"] = functi
 	local later = client("pyright", tmp)
 	sync.attach(later)
 	eq(#later.notifications, 0)
+end
+
+for _, stage in ipairs({ "detect", "prepare", "callback" }) do
+	T["sync"]["recovers from an adapter exception in " .. stage] = function()
+		sync.run(tmp, function() end)
+		local py = require("bzl.languages.python")
+		local detect, prepare, run = py.detect, py.prepare, cli.run
+		local pending
+		local function fail()
+			error("adapter exception")
+		end
+		if stage == "callback" then
+			py.prepare = function(ctx)
+				ctx.run({ "info", "execution_root" }, fail)
+			end
+			cli.run = function(root, args, done)
+				if args[1] == "info" then
+					pending = done
+					return true
+				end
+				return run(root, args, done)
+			end
+		else
+			py[stage] = fail
+		end
+		local ok, err = pcall(function()
+			local calls, result = 0, nil
+			sync.run(tmp, function(value)
+				calls, result = calls + 1, value
+			end)
+			if pending then
+				pending({ code = 0, stdout = "ignored" })
+			end
+			eq(calls, 1)
+			eq(result.languages.python.error:find("adapter exception", 1, true) ~= nil, true)
+			eq(sync.get(tmp, "python").paths, { tmp })
+		end)
+		py.detect, py.prepare, cli.run = detect, prepare, run
+		assert(ok, err)
+		local recovered
+		sync.run(tmp, function(value)
+			recovered = value
+		end)
+		eq(recovered.languages.python.clients, 1)
+	end
+end
+
+for _, scenario in ipairs({ "rules_go", "io_bazel_rules_go", "missing", "custom" }) do
+	T["sync"]["Go driver discovery: " .. scenario] = function()
+		local custom = scenario == "custom" and "//:driver" or nil
+		require("bzl.config").setup({ python = false, go = { driver_target = custom } })
+		local queries, built = {}, nil
+		cli.run = function(_, args, done)
+			if args[1] == "query" and args[2] == "//..." then
+				done({ code = 0, stdout = "go_library rule //:app\n" })
+			elseif args[1] == "query" then
+				queries[#queries + 1] = args[2]
+				local exists = args[2] == "@" .. scenario .. "//go/tools/gopackagesdriver"
+				done({ code = exists and 0 or 1, stdout = exists and args[2] or "", stderr = "unknown repository" })
+			else
+				eq(args[1], "build")
+				built = args[#args]
+				done({ code = 1, stderr = "stop before building" })
+			end
+			return true
+		end
+		local result
+		sync.run(tmp, function(value)
+			result = value
+		end)
+		eq(#queries, scenario == "custom" and 0 or (scenario == "rules_go" and 1 or 2))
+		if scenario == "missing" then
+			eq(built, nil)
+			eq(result.languages.go.error:find("set go.driver_target", 1, true) ~= nil, true)
+		else
+			eq(built, custom or "@" .. scenario .. "//go/tools/gopackagesdriver")
+			eq(result.languages.go.error, "bazel build failed:\nstop before building")
+		end
+		local errors = vim.tbl_filter(function(message)
+			return message:find("sync failed", 1, true) ~= nil
+		end, notifications)
+		eq(#errors, 1) -- Missing candidate labels are quiet; only the final failure is reported.
+	end
+end
+
+T["sync"]["one client's apply exception does not prevent completion or later attachment"] = function()
+	local py = require("bzl.languages.python")
+	local original = py.apply
+	py.apply = function()
+		error("apply exception")
+	end
+	local result
+	local ok, err = pcall(function()
+		sync.run(tmp, function(value)
+			result = value
+		end)
+		eq(result.languages.python.clients, 0)
+		sync.attach(client("pyright", tmp))
+	end)
+	py.apply = original
+	assert(ok, err)
+	local later = client("pyright", tmp)
+	sync.attach(later)
+	eq(later.settings.python.analysis.extraPaths, { tmp })
 end
 
 T["sync"]["an edit during Go preparation discards both staged models"] = function()
@@ -281,7 +392,7 @@ T["sync"]["an edit during Go preparation discards both staged models"] = functio
 			calls = calls + 1
 		end)
 		eq(sync.get(tmp, "python"), nil)
-		sync.invalidate(tmp)
+		sync.invalidate(tmp .. "/deps") -- A nested local module also affects its parent.
 		pending({ driver = "/ready", summary = "ready" })
 		eq(calls, 1)
 		eq(sync.get(tmp, "python"), nil)

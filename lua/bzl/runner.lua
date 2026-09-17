@@ -59,8 +59,9 @@ function M.execute(root, verb, label)
 	local started
 	local job
 	vim.api.nvim_win_call(win, function()
-		-- term = true converts the (current) buffer into a terminal
-		started, job = pcall(vim.fn.jobstart, cmd, {
+		-- jobstart gained term = true in 0.11; 0.10 needs termopen.
+		local open = vim.fn.has("nvim-0.11") == 1 and vim.fn.jobstart or vim.fn.termopen
+		started, job = pcall(open, cmd, {
 			cwd = root,
 			term = true,
 			on_exit = function()

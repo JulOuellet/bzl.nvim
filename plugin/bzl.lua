@@ -18,8 +18,11 @@ vim.api.nvim_create_autocmd("BufWritePost", {
 	},
 	desc = "Drop the bzl.nvim target cache when build files change",
 	callback = function(event)
-		local root = require("bzl.cli").workspace_root(event.buf)
 		-- an unloaded plugin has no cache to drop; don't load it just for this
+		if not package.loaded["bzl.targets"] and not package.loaded["bzl.sync"] then
+			return
+		end
+		local root = require("bzl.cli").workspace_root(event.buf)
 		if package.loaded["bzl.targets"] then
 			require("bzl.targets").refresh(root)
 		end

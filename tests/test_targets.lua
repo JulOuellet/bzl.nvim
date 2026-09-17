@@ -229,4 +229,37 @@ T["cache"]["editing one workspace leaves another workspace's query valid"] = fun
 	assert(ok, err)
 end
 
+T["cache"]["nested edits invalidate cached and pending ancestor queries"] = function()
+	local targets, cli = require("bzl.targets"), require("bzl.cli")
+	local original_run, original_notify = cli.run, vim.notify
+	local pending, calls = {}, 0
+	cli.run = function(root, _, done)
+		pending[root] = done
+		calls = calls + 1
+		return true
+	end
+	vim.notify = function() end
+	local ok, err = pcall(function()
+		targets.refresh()
+		for _, root in ipairs({ "/ws", "/ws/deps", "/ws-other" }) do
+			targets.list(root, function() end)
+			pending[root]({ code = 0, stdout = "go_library rule //:cached\n" })
+		end
+		local result
+		targets.list("/ws", function(value)
+			result = value or false
+		end, { refresh = true })
+		targets.refresh("/ws/deps")
+		pending["/ws"]({ code = 0, stdout = "go_library rule //:stale\n" })
+		MiniTest.expect.equality(result, false)
+		for _, root in ipairs({ "/ws", "/ws/deps", "/ws-other" }) do
+			targets.list(root, function() end)
+		end
+		MiniTest.expect.equality(calls, 6) -- Both ancestors refresh; the unrelated cache stays warm.
+	end)
+	cli.run, vim.notify = original_run, original_notify
+	targets.refresh()
+	assert(ok, err)
+end
+
 return T

@@ -14,7 +14,7 @@ M.defaults = {
 	},
 	go = {
 		enabled = true,
-		driver_target = "@rules_go//go/tools/gopackagesdriver",
+		-- nil probes @rules_go and @io_bazel_rules_go. Set a label to override.
 	},
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
@@ -30,7 +30,18 @@ local options
 
 ---@param opts table|nil
 function M.setup(opts)
-	options = vim.tbl_deep_extend("force", {}, M.defaults, opts or {})
+	opts = vim.deepcopy(opts or {})
+	for _, name in ipairs({ "python", "go" }) do
+		if type(opts[name]) == "boolean" then
+			opts[name] = { enabled = opts[name] }
+		end
+		assert(opts[name] == nil or type(opts[name]) == "table", name .. " must be a table or boolean")
+		assert(
+			not opts[name] or opts[name].enabled == nil or type(opts[name].enabled) == "boolean",
+			name .. ".enabled must be a boolean"
+		)
+	end
+	options = vim.tbl_deep_extend("force", {}, M.defaults, opts)
 end
 
 ---Initializes with defaults on first access so calling setup() is optional.

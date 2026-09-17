@@ -19,20 +19,7 @@ function M.detect(ctx)
 	return false
 end
 
-function M.prepare(ctx, done)
-	if not M.detect(ctx) then
-		done({ summary = "no Go targets" })
-		return
-	end
-	if vim.fn.has("win32") == 1 then
-		done(nil, "Go sync currently requires a POSIX shell")
-		return
-	end
-	local target = ctx.config.go.driver_target
-	if type(target) ~= "string" or not target:match("^[@/]") or target:find("[%s\"'()]") then
-		done(nil, "invalid go.driver_target")
-		return
-	end
+local function prepare_driver(ctx, target, done)
 	vim.notify("bzl.nvim: preparing Go package driver...", vim.log.levels.INFO)
 	ctx.run({ "build", "--remote_download_outputs=all", target }, function()
 		ctx.run({ "cquery", target, "--output=files" }, function(output)
@@ -52,41 +39,72 @@ function M.prepare(ctx, done)
 					done(nil, "Go package driver executable was not built: " .. executable)
 					return
 				end
-				local ok, driver = pcall(require("bzl.go.driver").create, ctx.root, ctx.config, executable)
-				if not ok then
-					done(nil, driver)
-					return
-				end
+				local driver = require("bzl.go.driver").create(ctx.root, ctx.config, executable)
 				-- Loading std validates the driver/toolchain without scanning the entire
 				-- Go workspace. gopls subsequently requests the packages it needs.
-				local started, err = pcall(
-					vim.system,
+				vim.system(
 					{ driver, "std" },
 					{
 						cwd = ctx.root,
 						text = true,
 						stdin = vim.json.encode({ mode = 159, tests = false }),
 					},
-					vim.schedule_wrap(function(result)
+					vim.schedule_wrap(ctx.wrap(function(result)
 						local valid, failure = require("bzl.go.driver").validate(result)
 						if valid then
 							done({ driver = driver, summary = "package driver ready" })
 						else
 							done(nil, failure)
 						end
-					end)
+					end))
 				)
-				if not started then
-					done(nil, "could not start Go package driver: " .. tostring(err))
-				end
 			end)
 		end)
 	end)
 end
 
+function M.prepare(ctx, done)
+	if not M.detect(ctx) then
+		done({ summary = "no Go targets" })
+		return
+	end
+	if vim.fn.has("win32") == 1 then
+		done(nil, "Go sync currently requires a POSIX shell")
+		return
+	end
+	local target = ctx.config.go.driver_target
+	if target ~= nil then
+		if type(target) ~= "string" or not target:match("^[@/]") or target:find("[%s\"'()]") then
+			done(nil, "invalid go.driver_target")
+		else
+			prepare_driver(ctx, target, done)
+		end
+		return
+	end
+	local candidates = { "@rules_go//go/tools/gopackagesdriver", "@io_bazel_rules_go//go/tools/gopackagesdriver" }
+	local failures = {}
+	local function probe(index)
+		local label = candidates[index]
+		if not label then
+			done(nil, "could not find the Go package driver; set go.driver_target.\n" .. table.concat(failures, "\n"))
+			return
+		end
+		ctx.run({ "query", label, "--output=label" }, function()
+			prepare_driver(ctx, label, done)
+		end, function(failure)
+			failures[#failures + 1] = failure
+			probe(index + 1)
+		end)
+	end
+	probe(1)
+end
+
 function M.apply(client, root, model)
 	if client.name ~= "gopls" or not require("bzl.lsp").belongs(client, root) then
 		return false
+	end
+	if not model.driver and not managed[client] then
+		return false -- A cleared model has nothing to contribute to a new client.
 	end
 	local settings = vim.deepcopy(client.settings or {})
 	settings.gopls = settings.gopls or {}
@@ -99,6 +117,9 @@ function M.apply(client, root, model)
 		return false, "preserved user GOPACKAGESDRIVER; gopls was not changed"
 	end
 	opts.env.GOPACKAGESDRIVER = model.driver
+	if next(opts.env) == nil then
+		opts.env = vim.empty_dict()
+	end
 	local patterns = {}
 	for _, pattern in ipairs(opts.workspaceFiles or {}) do
 		if not previous.added[pattern] then
@@ -118,7 +139,7 @@ function M.apply(client, root, model)
 	managed[client] = { driver = model.driver, added = added }
 	if not vim.deep_equal(settings, client.settings) then
 		client.settings = settings
-		client:notify("workspace/didChangeConfiguration", { settings = settings })
+		require("bzl.lsp").notify(client, "workspace/didChangeConfiguration", { settings = settings })
 	end
 	return true
 end
