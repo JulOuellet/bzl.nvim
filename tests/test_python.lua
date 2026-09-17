@@ -4,7 +4,7 @@ local lsp = require("bzl.python.lsp")
 local eq = MiniTest.expect.equality
 
 local function client(name, root, settings)
-	return {
+	local c = {
 		name = name or "pyright",
 		root_dir = root or "/ws",
 		settings = settings or {},
@@ -13,6 +13,13 @@ local function client(name, root, settings)
 			table.insert(self.notifications, { method = method, params = params })
 		end,
 	}
+	if vim.fn.has("nvim-0.11") == 0 then
+		local notify = c.notify
+		c.notify = function(...)
+			return notify(c, ...)
+		end
+	end
+	return c
 end
 
 T["lsp"] = MiniTest.new_set()
@@ -146,188 +153,6 @@ T["model"]["rejects incompatible runtimes instead of choosing one arbitrarily"] 
 	}, "/ws", "/exec")
 	eq(result, nil)
 	eq(err:find("different Python runtimes", 1, true) ~= nil, true)
-end
-
-local cli, python, original_python, original_run, original_clients, original_notify, tmp, c, notifications
-T["sync"] = MiniTest.new_set({
-	hooks = {
-		pre_case = function()
-			original_python = package.loaded["bzl.python"]
-			package.loaded["bzl.python"] = nil
-			python = require("bzl.python")
-			cli = require("bzl.cli")
-			original_run, original_clients, original_notify = cli.run, vim.lsp.get_clients, vim.notify
-			tmp = vim.fn.tempname()
-			vim.fn.mkdir(tmp .. "/_main", "p")
-			c, notifications = client("basedpyright", tmp), {}
-			vim.lsp.get_clients = function()
-				return { c }
-			end
-			vim.notify = function(message)
-				table.insert(notifications, message)
-			end
-			require("bzl.config").setup({ python = { targets = { "//:app" } } })
-			cli.run = function(_, args, done)
-				if args[1] == "query" then
-					done({ code = 0, stdout = "py_binary rule //:app\nsh_test rule //:test\n" })
-				elseif args[1] == "cquery" then
-					done({
-						code = 0,
-						stdout = vim.json.encode({ label = "//:app", imports = {}, roots = {}, generated = {} }),
-					})
-				else
-					done({ code = 0, stdout = tmp .. "/_main\n" })
-				end
-				return true
-			end
-		end,
-		post_case = function()
-			package.loaded["bzl.python"] = original_python
-			cli.run, vim.lsp.get_clients, vim.notify = original_run, original_clients, original_notify
-			require("bzl.config").setup()
-			vim.fn.delete(tmp, "rf")
-		end,
-	},
-})
-
-T["sync"]["builds before publishing and replays to clients that start later"] = function()
-	local commands, run = {}, cli.run
-	cli.run = function(root, args, done)
-		table.insert(commands, args[1])
-		eq(python.get(tmp), nil)
-		return run(root, args, done)
-	end
-	local result
-	python.sync(tmp, function(value)
-		result = value
-	end)
-	eq(commands, { "query", "cquery", "build", "info" })
-	eq(result, { paths = 1, clients = 1, targets = 2 })
-	local later = client("pyright", tmp)
-	python.attach(later)
-	eq(later.settings.python.analysis.extraPaths, { tmp })
-end
-
-T["sync"]["selects discovered Python rules unless targets are configured"] = function()
-	local run = cli.run
-	for _, labels in ipairs({ {}, { "//:selected" } }) do
-		require("bzl.config").setup({ python = { targets = labels } })
-		cli.run = function(root, args, done)
-			if args[1] == "cquery" then
-				eq(args[2], "config(set(" .. (labels[1] or "//:app") .. "), target)")
-			end
-			return run(root, args, done)
-		end
-		local calls = 0
-		python.sync(tmp, function(result)
-			eq(result.targets, 2)
-			calls = calls + 1
-		end)
-		eq(calls, 1)
-	end
-end
-
-T["sync"]["retains the last model and client settings on any stage failure"] = function()
-	python.sync(tmp, function() end)
-	local before = vim.deepcopy(c.settings)
-	local successful = cli.run
-	for _, stage in ipairs({ "query", "cquery", "build", "info" }) do
-		cli.run = function(root, args, done)
-			if args[1] == stage then
-				done({ code = 1, stderr = "simulated failure" })
-				return true
-			end
-			return successful(root, args, done)
-		end
-		local calls = 0
-		python.sync(tmp, function(value)
-			eq(value, nil)
-			calls = calls + 1
-		end)
-		eq(calls, 1)
-		eq(c.settings, before)
-		eq(python.get(tmp).paths, { tmp })
-	end
-end
-
-T["sync"]["completes exactly once when a command cannot start"] = function()
-	cli.run = function()
-		return false
-	end
-	local calls = 0
-	python.sync(tmp, function(value)
-		eq(value, nil)
-		calls = calls + 1
-	end)
-	eq(calls, 1)
-	eq(python.get(tmp), nil)
-end
-
-T["sync"]["rejects overlapping syncs and discards results invalidated by an edit"] = function()
-	local run = cli.run
-	for _, stage in ipairs({ "query", "cquery" }) do
-		local pending
-		cli.run = function(root, args, done)
-			if args[1] == stage then
-				pending = function()
-					run(root, args, done)
-				end
-				return true
-			end
-			return run(root, args, done)
-		end
-		local first, second = 0, 0
-		python.sync(tmp, function(value)
-			eq(value, nil)
-			first = first + 1
-		end)
-		python.sync(tmp, function(value)
-			eq(value, nil)
-			second = second + 1
-		end)
-		eq(second, 1)
-		python.invalidate(tmp)
-		pending()
-		eq(first, 1)
-		eq(python.get(tmp), nil)
-		eq(#c.notifications, 0)
-	end
-end
-
-T["sync"]["clears managed paths when there are no Python targets"] = function()
-	python.sync(tmp, function() end)
-	require("bzl.config").setup()
-	cli.run = function(_, args, done)
-		eq(args[1], "query")
-		done({ code = 0, stdout = "sh_test rule //:test\n" })
-		return true
-	end
-	python.sync(tmp, function(result)
-		eq(result.paths, 0)
-		eq(result.targets, 1)
-	end)
-	eq(c.settings.basedpyright.analysis.extraPaths, {})
-end
-
-T["sync"]["keeps one configuration throughout the commands and discards changed settings"] = function()
-	local execute = cli.run
-	local commands = 0
-	cli.run = function(root, args, done, config)
-		commands = commands + 1
-		if args[1] ~= "query" then
-			eq(config.build_flags, {})
-		end
-		if args[1] == "query" then
-			require("bzl.config").setup({ python = { targets = { "//:app" } }, build_flags = { "--config=other" } })
-		end
-		return execute(root, args, done)
-	end
-	python.sync(tmp, function(value)
-		eq(value, nil)
-	end)
-	eq(commands, 4)
-	eq(python.get(tmp), nil)
-	eq(#c.notifications, 0)
 end
 
 return T

@@ -21,6 +21,24 @@ T["config"]["setup() overrides defaults"] = function()
 	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().bazel_cmd]]), "bazelisk")
 end
 
+T["config"]["normalizes language switches and rejects malformed options before replacing config"] = function()
+	child.lua([[require("bzl").setup({ go = false, python = true })]])
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().go.enabled]]), false)
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().python.targets]]), {})
+	MiniTest.expect.error(function()
+		child.lua([[require("bzl").setup({ go = "no" })]])
+	end, "go must be a table or boolean")
+	MiniTest.expect.equality(child.lua_get([[require("bzl.config").get().go.enabled]]), false)
+	-- Health must also accept shorthand switches.
+	child.cmd("checkhealth bzl")
+	MiniTest.expect.equality(
+		child.lua_get(
+			[[table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("Disabled", 1, true) ~= nil]]
+		),
+		true
+	)
+end
+
 T[":Bzl"] = MiniTest.new_set()
 
 T[":Bzl"]["is registered"] = function()
@@ -100,7 +118,7 @@ T[":Bzl"]["sync re-queries through real bazel"] = function()
 	local notifications = child.lua_get([[_G.notifications]])
 	MiniTest.expect.equality(notifications[2]:find("synced 5 targets", 1, true) ~= nil, true)
 	-- Non-Python workspaces need no configured analysis or Python build.
-	MiniTest.expect.equality(notifications[2]:find("0 python paths", 1, true) ~= nil, true)
+	MiniTest.expect.equality(notifications[2]:find("python", 1, true), nil)
 end
 
 T[":Bzl"]["sync keeps its workspace when the current buffer changes"] = function()
@@ -109,12 +127,17 @@ T[":Bzl"]["sync keeps its workspace when the current buffer changes"] = function
 		require("bzl.targets").list = function(root, on_done)
 			_G.sync_root = root
 			vim.cmd("enew")
-			on_done({})
+			on_done({ { kind = "py_library", label = "//:app" } })
+		end
+		require("bzl.languages.python").prepare = function(ctx, done)
+			_G.adapter_root = ctx.root
+			done({ paths = {}, targets = 1, summary = "0 python paths" })
 		end
 		require("bzl").sync()
 	]])
 	MiniTest.expect.equality(child.lua_get([[_G.sync_root:match("tests/fixture$")]]), "tests/fixture")
-	MiniTest.expect.equality(child.lua_get([[require("bzl.python").get(_G.sync_root)]]), { paths = {}, targets = 0 })
+	MiniTest.expect.equality(child.lua_get([[_G.adapter_root]]), child.lua_get([[_G.sync_root]]))
+	MiniTest.expect.equality(child.lua_get([[require("bzl.sync").get(_G.sync_root, "python").targets]]), 1)
 end
 
 T[":Bzl"]["registers the build-file autocmds"] = function()
@@ -133,6 +156,14 @@ T[":Bzl"]["registers the build-file autocmds"] = function()
 		"WORKSPACE",
 		"WORKSPACE.bazel",
 	})
+end
+
+T[":Bzl"]["build-file writes keep unused modules unloaded"] = function()
+	child.cmd("edit tests/go_fixture/deps/BUILD.bazel")
+	child.lua([[vim.api.nvim_exec_autocmds("BufWritePost", { buffer = 0 })]])
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.cli"] ~= nil]]), false)
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.targets"] ~= nil]]), false)
+	MiniTest.expect.equality(child.lua_get([[package.loaded["bzl.sync"] ~= nil]]), false)
 end
 
 T[":Bzl"]["reports unknown subcommand"] = function()

@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+config_setting(
+    name = "alternate",
+    define_values = {"go_variant": "alternate"},
+)
+
+genrule(
+    name = "generate",
+    outs = ["generated/message.go"],
+    cmd = "printf 'package generated\nfunc Message() string { return \"generated\" }\n' > $@",
+)
+
+go_library(
+    name = "generated",
+    srcs = [":generate"],
+    importpath = "example.test/bzl-sync/generated",
+)
+
+go_library(
+    name = "app",
+    srcs = ["app.go"],
+    importpath = "example.test/bzl-sync/app",
+    deps = [":generated", "//lib"] + select({
+        ":alternate": ["@fixture_go_deps//:alternate"],
+        "//conditions:default": ["@fixture_go_deps//:normal"],
+    }),
+)
+
+go_test(
+    name = "app_test",
+    srcs = ["app_test.go"],
+    embed = [":app"],
+)
+
+go_binary(
+    name = "main",
+    srcs = ["cmd/main.go"],
+    deps = [":app"],
+)

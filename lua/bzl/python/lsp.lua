@@ -3,52 +3,8 @@ local M = {}
 local namespaces = { pyright = "python", basedpyright = "basedpyright" }
 local managed = setmetatable({}, { __mode = "k" })
 
-local function normalize(path)
-	return vim.fs.normalize(vim.uv.fs_realpath(path) or path)
-end
-
-local function inside(path, root)
-	path = normalize(path)
-	return path == root or path:sub(1, #root + 1) == root .. "/"
-end
-
----Do not send workspace-wide settings to a client shared with another workspace.
 function M.belongs(client, root)
-	if not namespaces[client.name] then
-		return false
-	end
-	root = normalize(root)
-	if client.root_dir then
-		if not inside(client.root_dir, root) then
-			return false
-		end
-		local workspace = require("bzl.cli").workspace_root(client.root_dir)
-		if workspace and normalize(workspace) ~= root then
-			return false
-		end
-	end
-	local known = client.root_dir ~= nil
-	for _, folder in ipairs(client.workspace_folders or {}) do
-		if not inside(vim.uri_to_fname(folder.uri), root) then
-			return false
-		end
-		known = true
-	end
-	-- A rooted server may also attach to generated files and external libraries.
-	-- Its declared workspace remains authoritative; buffers identify rootless servers.
-	if known then
-		return true
-	end
-	for buf in pairs(client.attached_buffers or {}) do
-		if vim.api.nvim_buf_is_valid(buf) then
-			local workspace = require("bzl.cli").workspace_root(buf)
-			if not workspace or normalize(workspace) ~= root then
-				return false
-			end
-			known = true
-		end
-	end
-	return known
+	return namespaces[client.name] ~= nil and require("bzl.lsp").belongs(client, root)
 end
 
 ---Replace only our previous contribution, retaining user paths and edits.
@@ -88,7 +44,7 @@ function M.apply(client, root, model)
 	managed[client] = next_managed
 	if not vim.deep_equal(settings, client.settings) then
 		client.settings = settings
-		client:notify("workspace/didChangeConfiguration", { settings = settings })
+		require("bzl.lsp").notify(client, "workspace/didChangeConfiguration", { settings = settings })
 	end
 	return true
 end

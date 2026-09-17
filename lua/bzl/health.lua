@@ -26,16 +26,28 @@ function M.check()
 		})
 	end
 
-	vim.health.start("Python sync")
 	local root = require("bzl.cli").workspace_root()
-	local model = root and require("bzl.python").get(root)
-	if model then
-		vim.health.ok(("%d configured Python targets, %d import paths"):format(model.targets, #model.paths))
-		if model.interpreter then
-			vim.health.info("Bazel Python interpreter: " .. model.interpreter)
+	for _, name in ipairs({ "python", "go" }) do
+		vim.health.start(name .. " sync")
+		if not require("bzl.config").get()[name].enabled then
+			vim.health.info("Disabled")
+		else
+			local model = root and require("bzl.sync").get(root, name)
+			if model then
+				vim.health.ok(model.summary)
+				if model.targets then
+					vim.health.info(("%d configured targets"):format(model.targets))
+				end
+				if model.interpreter then
+					vim.health.info("Bazel Python interpreter: " .. model.interpreter)
+				end
+				if model.driver then
+					vim.health.info("Go package driver: " .. model.driver)
+				end
+			else
+				vim.health.info("No successful sync for this workspace yet; run :Bzl sync")
+			end
 		end
-	else
-		vim.health.info("No successful Python sync for this workspace yet; run :Bzl sync")
 	end
 end
 

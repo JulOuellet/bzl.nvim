@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        neovim: [stable, nightly]
+        neovim: [v0.10.4, stable, nightly]
     steps:
       - uses: actions/checkout@v4
       - uses: rhysd/action-setup-vim@v1
@@ -31,6 +31,11 @@ jobs:
         with:
           node-version: 24
       - run: npm install -g pyright@1.1.411 basedpyright@1.39.8
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache: false
+      - run: go install golang.org/x/tools/gopls@v0.22.0
       - run: make test
 
   fixture:

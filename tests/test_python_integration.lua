@@ -1,12 +1,19 @@
 local T = MiniTest.new_set()
 local eq = MiniTest.expect.equality
 local root = vim.fn.getcwd() .. "/tests/python_fixture"
-local python = require("bzl.python")
+local coordinator = require("bzl.sync")
+
+local function request(client, ...)
+	if vim.fn.has("nvim-0.11") == 1 then
+		return client:request_sync(...)
+	end
+	return client.request_sync(...)
+end
 
 local function sync(flags)
 	require("bzl.config").setup({ python = { targets = { "//:app" } }, build_flags = flags or {} })
 	local done, result = false, nil
-	python.sync(root, function(value)
+	coordinator.run(root, function(value)
 		result, done = value, true
 	end)
 	assert(
@@ -15,8 +22,8 @@ local function sync(flags)
 		end, 50),
 		"Python sync timed out"
 	)
-	assert(result, "Python sync failed")
-	return python.get(root)
+	assert(result and result.languages.python and result.languages.python.model, "Python sync failed")
+	return coordinator.get(root, "python")
 end
 
 local function has_path(paths, suffix)
@@ -54,7 +61,7 @@ for _, name in ipairs({ "pyright", "basedpyright" }) do
 		if command == "" or vim.fn.executable(require("bzl.config").get().bazel_cmd) == 0 then
 			MiniTest.skip(name .. " or bazel not available")
 		end
-		if not python.get(root) then
+		if not coordinator.get(root, "python") then
 			sync()
 		end
 		vim.cmd.edit(root .. "/app.py")
@@ -80,7 +87,7 @@ for _, name in ipairs({ "pyright", "basedpyright" }) do
 				{ line = 1, character = 8 },
 				{ line = 2, character = 8 },
 			}) do
-				local response = client:request_sync("textDocument/definition", {
+				local response = request(client, "textDocument/definition", {
 					textDocument = { uri = vim.uri_from_fname(root .. "/app.py") },
 					position = position,
 				}, 15000, 0)
@@ -96,7 +103,7 @@ for _, name in ipairs({ "pyright", "basedpyright" }) do
 				eq(vim.endswith(vim.uri_to_fname(uri), suffix), true)
 			end
 		end)
-		client:stop(true)
+		vim.lsp.stop_client(id, true)
 		vim.cmd("enew!")
 		require("bzl.config").setup()
 		assert(ok, err)

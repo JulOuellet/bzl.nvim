@@ -1,0 +1,2 @@
+module(name = "fixture_go_deps", version = "1.0")
+bazel_dep(name = "rules_go", version = "0.58.3")

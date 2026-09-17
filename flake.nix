@@ -21,6 +21,8 @@
             # generic linux binaries, which cannot run on NixOS
             pkgs.bazel_8
             pkgs.python3
+            pkgs.go
+            pkgs.gopls
             pkgs.stylua
             pkgs.gnumake
           ];

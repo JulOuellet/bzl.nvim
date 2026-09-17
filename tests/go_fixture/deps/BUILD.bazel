@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "normal",
+    srcs = ["normal/message.go"],
+    importpath = "example.test/bzl-external/message",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "alternate",
+    srcs = ["alternate/message.go"],
+    importpath = "example.test/bzl-external/message",
+    visibility = ["//visibility:public"],
+)
