@@ -29,14 +29,47 @@ end
 ---@field stdout string|nil
 ---@field stderr string|nil
 
+---Run a process, optionally streaming stderr while retaining it in the result.
+---Both callbacks run on the main loop; on_stderr(nil) marks end of output.
+function M.system(cmd, opts, on_done, on_stderr)
+	opts = vim.tbl_extend("force", { text = true }, opts)
+	local chunks = {}
+	if on_stderr then
+		opts.stderr = function(err, data)
+			local chunk = err or data
+			if chunk then
+				chunks[#chunks + 1] = chunk
+				vim.schedule(function()
+					on_stderr(chunk)
+				end)
+			end
+		end
+	end
+	return vim.system(
+		cmd,
+		opts,
+		vim.schedule_wrap(function(result)
+			if on_stderr then
+				result.stderr = table.concat(chunks)
+				if opts.text then
+					result.stderr = result.stderr:gsub("\r\n", "\n")
+				end
+				on_stderr(nil)
+			end
+			on_done(result)
+		end)
+	)
+end
+
 ---Run bazel asynchronously from a workspace root.
 ---`on_done` always runs on the main loop, so it may use any nvim API.
 ---@param root string|nil workspace root
 ---@param args string[] bazel arguments, e.g. { "query", "//..." }
 ---@param on_done fun(result: bzl.CliResult)
 ---@param config table|nil configuration snapshot, defaults to current setup
+---@param on_stderr fun(data: string|nil)|nil live stderr, followed by nil before on_done
 ---@return boolean started false if no workspace or the binary could not be spawned
-function M.run(root, args, on_done, config)
+function M.run(root, args, on_done, config, on_stderr)
 	if not root then
 		vim.notify(
 			"bzl.nvim: no bazel workspace found (no MODULE.bazel or WORKSPACE above this file)",
@@ -47,7 +80,7 @@ function M.run(root, args, on_done, config)
 
 	local cmd = M.command(args, config)
 
-	local ok, err = pcall(vim.system, cmd, { cwd = root, text = true }, vim.schedule_wrap(on_done))
+	local ok, err = pcall(M.system, cmd, { cwd = root }, on_done, on_stderr)
 	if not ok then
 		vim.notify(("bzl.nvim: could not run %q: %s"):format(cmd[1], err), vim.log.levels.ERROR)
 		return false

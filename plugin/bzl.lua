@@ -63,6 +63,7 @@ end, {
 		if sub then
 			local args_for = {
 				targets = { "here", "runnable", "testable" },
+				sync = { "log" },
 			}
 			if not args_for[sub] then
 				return {}

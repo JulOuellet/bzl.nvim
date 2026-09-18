@@ -20,7 +20,7 @@ function M.detect(ctx)
 end
 
 local function prepare_driver(ctx, target, done)
-	vim.notify("bzl.nvim: preparing Go package driver...", vim.log.levels.INFO)
+	ctx.progress("Preparing Go package driver")
 	ctx.run({ "build", "--remote_download_outputs=all", target }, function()
 		ctx.run({ "cquery", target, "--output=files" }, function(output)
 			local files = vim.split(vim.trim(output), "\n", { trimempty = true })
@@ -42,22 +42,19 @@ local function prepare_driver(ctx, target, done)
 				local driver = require("bzl.go.driver").create(ctx.root, ctx.config, executable)
 				-- Loading std validates the driver/toolchain without scanning the entire
 				-- Go workspace. gopls subsequently requests the packages it needs.
-				vim.system(
-					{ driver, "std" },
-					{
-						cwd = ctx.root,
-						text = true,
-						stdin = vim.json.encode({ mode = 159, tests = false }),
-					},
-					vim.schedule_wrap(ctx.wrap(function(result)
-						local valid, failure = require("bzl.go.driver").validate(result)
-						if valid then
-							done({ driver = driver, summary = "package driver ready" })
-						else
-							done(nil, failure)
-						end
-					end))
-				)
+				ctx.progress("Validating Go package driver")
+				ctx.system({ driver, "std" }, {
+					cwd = ctx.root,
+					text = true,
+					stdin = vim.json.encode({ mode = 159, tests = false }),
+				}, function(result)
+					local valid, failure = require("bzl.go.driver").validate(result)
+					if valid then
+						done({ driver = driver, summary = "package driver ready" })
+					else
+						done(nil, failure)
+					end
+				end)
 			end)
 		end)
 	end)

@@ -58,7 +58,8 @@ T[":Bzl"]["completes picker arguments, minus the ones already used"] = function(
 		child.lua_get([[vim.fn.getcompletion("Bzl targets testable ", "cmdline")]]),
 		{ "here", "runnable" }
 	)
-	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync ", "cmdline")]]), {})
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync ", "cmdline")]]), { "log" })
+	MiniTest.expect.equality(child.lua_get([[vim.fn.getcompletion("Bzl sync log ", "cmdline")]]), {})
 end
 
 T[":Bzl"]["rejects an unknown picker argument"] = function()

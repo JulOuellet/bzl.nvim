@@ -64,8 +64,16 @@ Calling `setup()` (or using `opts`) is optional; defaults apply otherwise.
 | --- | --- |
 | `:Bzl targets [testable\|runnable] [here]` | Flat fuzzy picker over targets |
 | `:Bzl sync` | Refresh targets and configure Python and Go language servers from Bazel |
+| `:Bzl sync log` | Reopen the current workspace's latest sync log |
 
-Arguments can be combined in any order:
+Sync opens a log split at the bottom without moving focus. It streams Bazel's
+progress and errors as they arrive, records each sync stage, and shows the current
+stage and elapsed time in the window bar, including while Bazel is quiet. The log
+follows new output unless you scroll up. Press `q` in the split to close it;
+sync continues and `:Bzl sync log` reopens the output. Logs remain available for
+the Neovim session, with the next sync replacing that workspace's previous log.
+
+Target picker arguments can be combined in any order:
 
 - `testable` — only `*_test` targets
 - `runnable` — only `*_binary` targets
@@ -243,6 +251,10 @@ require("bzl").setup({
 	picker = {
 		-- Show the BUILD-file preview panel when the picker opens.
 		preview = false,
+	},
+	sync = {
+		-- Height of the split that shows sync progress and logs.
+		height = 15,
 	},
 	runner = {
 		-- Height of the terminal split that shows run/test output.

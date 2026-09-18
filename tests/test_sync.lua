@@ -53,6 +53,11 @@ T["sync"] = MiniTest.new_set({
 			end
 		end,
 		post_case = function()
+			for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+				if vim.api.nvim_buf_get_name(buf):find("bzl://sync", 1, true) == 1 then
+					vim.api.nvim_buf_delete(buf, { force = true })
+				end
+			end
 			package.loaded["bzl.sync"] = original_sync
 			cli.run, vim.lsp.get_clients, vim.notify = original_run, original_clients, original_notify
 			require("bzl.config").setup()
@@ -60,6 +65,37 @@ T["sync"] = MiniTest.new_set({
 		end,
 	},
 })
+
+T["sync"]["logs discovery and language output before commands finish"] = function()
+	local run, pending, stream = cli.run
+	cli.run = function(root, args, done, config, on_stderr)
+		eq(type(on_stderr), "function")
+		eq(config.python.targets, { "//:app" })
+		stream = on_stderr
+		pending = function()
+			on_stderr(nil)
+			run(root, args, done)
+		end
+		return true
+	end
+	local result
+	sync.run(tmp, function(value)
+		result = value
+	end)
+	local buf = vim.fn.bufnr("bzl://sync" .. tmp)
+	local function contents()
+		return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+	end
+	for _, stage in ipairs({ "query", "cquery", "build", "info" }) do
+		stream("progress from " .. stage .. "\n")
+		eq(contents():find("progress from " .. stage, 1, true) ~= nil, true)
+		eq(result, nil)
+		pending()
+	end
+	eq(result.targets, 2)
+	eq(contents():find("Synced 2 targets", 1, true) ~= nil, true)
+	eq(contents():find('"imports"', 1, true), nil)
+end
 
 T["sync"]["builds before publishing and replays to clients that start later"] = function()
 	local commands, run = {}, cli.run
@@ -120,6 +156,9 @@ T["sync"]["retains the last model and client settings on any stage failure"] = f
 		eq(calls, 1)
 		eq(c.settings, before)
 		eq(sync.get(tmp, "python").paths, { tmp })
+		local buf = vim.fn.bufnr("bzl://sync" .. tmp)
+		local status = vim.b[buf].bzl_sync_status
+		eq(status:find(stage == "query" and "Sync failed" or "with language errors", 1, true) ~= nil, true)
 	end
 end
 
@@ -154,10 +193,13 @@ T["sync"]["rejects overlapping syncs and discards results invalidated by an edit
 			eq(value and value.languages.python.model, nil)
 			first = first + 1
 		end)
+		local buf = vim.fn.bufnr("bzl://sync" .. tmp)
+		local before = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 		sync.run(tmp, function(value)
 			eq(value and value.languages.python.model, nil)
 			second = second + 1
 		end)
+		eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), before)
 		eq(second, 1)
 		sync.invalidate(tmp)
 		pending()
