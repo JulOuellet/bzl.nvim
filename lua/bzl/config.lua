@@ -20,6 +20,10 @@ M.defaults = {
 		-- Show the BUILD-file preview panel when the picker opens.
 		preview = false,
 	},
+	sync = {
+		-- Height of the split that shows sync progress and logs.
+		height = 15,
+	},
 	runner = {
 		-- Height of the terminal split that shows run/test output.
 		height = 15,

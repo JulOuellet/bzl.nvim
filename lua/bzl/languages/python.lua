@@ -37,7 +37,7 @@ function M.prepare(ctx, done)
 			done(nil, err or "selected targets do not expose PyInfo")
 			return
 		end
-		vim.notify(("bzl.nvim: building %d Python targets..."):format(#records), vim.log.levels.INFO)
+		ctx.progress(("Building %d Python targets"):format(#records))
 		local build = { "build", "--output_groups=+compilation_outputs", "--remote_download_outputs=all" }
 		for _, record in ipairs(records) do
 			build[#build + 1] = record.label

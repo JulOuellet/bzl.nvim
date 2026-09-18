@@ -123,7 +123,7 @@ end
 ---callers can always rely on being called exactly once.
 ---@param root string|nil workspace root
 ---@param on_done fun(targets: bzl.Target[]|nil)
----@param opts { refresh: boolean }|nil
+---@param opts { refresh: boolean, config: table|nil, on_stderr: function|nil }|nil
 function M.list(root, on_done, opts)
 	local cli = require("bzl.cli")
 
@@ -155,7 +155,7 @@ function M.list(root, on_done, opts)
 			cache[root] = targets
 		end
 		on_done(targets)
-	end)
+	end, opts and opts.config, opts and opts.on_stderr)
 	if not started then
 		on_done(nil)
 	end

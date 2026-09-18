@@ -11,8 +11,15 @@ function M.targets(...)
 end
 
 ---Refresh targets and synchronize the workspace's supported languages.
-function M.sync()
-	local root = require("bzl.cli").workspace_root()
+function M.sync(arg)
+	local root = vim.b.bzl_workspace_root or require("bzl.cli").workspace_root()
+	if arg == "log" then
+		require("bzl.sync_log").open(root)
+		return
+	elseif arg then
+		vim.notify("bzl.nvim usage: Bzl sync [log]", vim.log.levels.ERROR)
+		return
+	end
 	vim.notify("bzl.nvim: syncing targets...", vim.log.levels.INFO)
 	local start = vim.uv.hrtime()
 	require("bzl.sync").run(root, function(result)
@@ -46,7 +53,7 @@ M.subcommands = {
 ---@param fargs string[]
 function M.cmd(fargs)
 	if #fargs == 0 then
-		vim.notify("bzl.nvim usage: Bzl targets [testable|runnable] [here] | Bzl sync", vim.log.levels.INFO)
+		vim.notify("bzl.nvim usage: Bzl targets [testable|runnable] [here] | Bzl sync [log]", vim.log.levels.INFO)
 		return
 	end
 	local subcommand = M.subcommands[fargs[1]]
