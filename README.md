@@ -179,8 +179,14 @@ sync first builds the driver and validates it by loading standard-library
 metadata. A successful sync means the driver is ready, while gopls can continue
 loading project packages in the background.
 
-Install Go and gopls and configure your gopls client to use the Bazel workspace
-root. For example, with Neovim 0.11+ and nvim-lspconfig:
+Install Go and gopls. **Configure gopls to use the Bazel workspace root** (the
+directory containing `MODULE.bazel`, `WORKSPACE.bazel`, or `WORKSPACE`). The default
+nvim-lspconfig root detection looks for Go module/workspace files and `.git`, so a
+Bazel workspace nested inside a Git repository can get the wrong root. bzl.nvim
+only applies the package driver to clients belonging to that Bazel workspace;
+sync does not change a running client's root.
+
+With Neovim 0.11+ and nvim-lspconfig, configure the root before enabling gopls:
 
 ```lua
 local default_root_dir = vim.lsp.config.gopls.root_dir
@@ -196,6 +202,27 @@ vim.lsp.config("gopls", {
 })
 vim.lsp.enable("gopls")
 ```
+
+If you use the older `require("lspconfig").gopls.setup({...})` API, add `root_dir`
+to your existing setup, keeping your capabilities and settings:
+
+```lua
+require("lspconfig").gopls.setup({
+  -- Keep your existing options here.
+  root_dir = function(fname)
+    return vim.fs.root(fname, { "MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE" })
+      or require("lspconfig.util").root_pattern("go.work", "go.mod", ".git")(fname)
+  end,
+})
+```
+
+After changing the root configuration, restart Neovim and run `:Bzl sync` again.
+If imports remain underlined, open `:Bzl sync log`. A line such as
+`go: package driver ready -> 0 clients` means the driver was prepared but no gopls
+client received it. If gopls is attached, check its root with `:LspInfo`: it should
+be the Bazel workspace directory, not a parent Git repository. Zero clients is
+also expected when gopls has not started yet; the saved driver is applied when a
+matching client attaches.
 
 Sync probes `@rules_go` and `@io_bazel_rules_go` to find the driver, supporting
 both common Bzlmod and WORKSPACE repository names. Override the driver's label
