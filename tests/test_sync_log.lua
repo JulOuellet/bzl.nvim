@@ -45,16 +45,27 @@ end
 
 T["updates elapsed time while quiet and stops after completion"] = function()
 	child.lua([[
-		log:stage("Waiting for Bazel")
-		_G.before = vim.b[buf].bzl_sync_status
-		assert(vim.wait(2500, function()
-			return vim.b[buf].bzl_sync_status ~= before
-		end))
-		log:finish("Sync failed")
-		_G.finished = vim.b[buf].bzl_sync_status
-		vim.wait(1200, function() return false end)
+		local defer = vim.defer_fn
+		local ticks = {}
+		vim.defer_fn = function(callback, delay)
+			assert(delay == 1000)
+			ticks[#ticks + 1] = callback
+		end
+		local timed = logs.start("/timed")
+		local timed_buf = timed.buf
+		local before = vim.b[timed_buf].bzl_sync_status
+		timed.started = vim.uv.hrtime() - 2e9
+		ticks[1]()
+		assert(vim.b[timed_buf].bzl_sync_status ~= before)
+		assert(#ticks == 2)
+		timed:finish("Sync failed")
+		_G.finished = vim.b[timed_buf].bzl_sync_status
+		ticks[2]()
+		assert(#ticks == 2)
+		_G.timed_buf = timed_buf
+		vim.defer_fn = defer
 	]])
-	eq(child.lua_get("vim.b[buf].bzl_sync_status"), child.lua_get("finished"))
+	eq(child.lua_get("vim.b[timed_buf].bzl_sync_status"), child.lua_get("finished"))
 	eq(child.lua_get("finished:find('Sync failed', 1, true) ~= nil"), true)
 end
 

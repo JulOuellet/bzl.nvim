@@ -303,8 +303,8 @@ current workspace.
 With nix, `nix develop` provides Bazel, Python 3, Go, gopls, stylua, and make.
 Otherwise, have Neovim >= 0.10, bazelisk, Python 3, stylua, and make on your PATH.
 
-- `make test` — run the test suite headless (clones mini.nvim into `deps/`
-  on first run)
+- `make test` — run the full test suite headless, with the Go and Python
+  integration files in parallel (clones mini.nvim into `deps/` on first run)
 - `make fmt` / `make fmt-check` — format / check lua sources
 - `tests/fixture/` — a small bazel workspace used as an integration-test bed
 - `tests/python_fixture/` — configured Python imports, pip, and generated sources
